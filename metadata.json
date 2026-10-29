@@ -1,0 +1,11 @@
+{
+  "name": "NutrinK — Sistema de Gestão e Inteligência Clínica Digital",
+  "description": "NutrinK — Sistema de Gestão e Inteligência Clínica Digital para nutricionistas e nutrólogos com IA clínica (NÚTRIA), cálculos metabólicos (TMB/GET), prontuário eletrônico, telemedicina e controle financeiro.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,955 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { marked } from 'marked';
+import { 
+  Bot, 
+  Send, 
+  Mic, 
+  MicOff, 
+  CheckCircle2, 
+  Copy, 
+  Check, 
+  Download, 
+  Printer, 
+  Calendar, 
+  User,
+  UserPlus, 
+  DollarSign, 
+  Calculator, 
+  Flame, 
+  RefreshCw, 
+  Layers, 
+  ArrowRight, 
+  FileText, 
+  HeartPulse, 
+  Crown, 
+  Lock, 
+  Volume2,
+  VolumeX,
+  Activity,
+  Zap,
+  Terminal,
+  Code,
+  AlertCircle,
+  Sliders,
+  Sparkles,
+  ShieldCheck,
+  Dna,
+  Pill,
+  Package,
+  X
+} from 'lucide-react';
+import { NutriaMessage, Patient, Appointment, UserAccount } from '../types';
+import { speakText, stopSpeech } from '../utils/voiceUtils';
+import { callNutriaDirect } from '../services/nutriaGeminiDirect';
+import { cleanMathAndLatex } from '../utils/cleanMarkdown';
+import { trackNutriaInteraction } from '../services/analytics';
+import { getNutriaGreeting } from '../utils/nutriaGreeting';
+import { NutriaAvatar } from './NutriaAvatar';
+import { 
+  getDailyNutriaUsage, 
+  incrementDailyNutriaUsage, 
+  NutriaQuotaStatus, 
+  DAILY_NUTRIA_FREE_LIMIT, 
+  NUTRIA_WARNING_THRESHOLD 
+} from '../utils/nutriaQuotaManager';
+
+interface NutriaCopilotProps {
+  messages?: NutriaMessage[];
+  onSendMessage?: (msg: string) => Promise<void> | void;
+  isLoading?: boolean;
+  activePatient?: Patient | null;
+  patientContext?: any;
+  todayAppointments?: Appointment[];
+  patientsCount?: number;
+  monthlyRevenue?: number;
+  monthlyExpenses?: number;
+  isFloating?: boolean;
+  onCloseFloating?: () => void;
+  userAccount?: UserAccount;
+  onOpenSubscriptionModal?: () => void;
+  onOpenLoginModal?: (tab?: 'login' | 'register') => void;
+  onActionExecuted?: (action: any) => void;
+  onClearMessages?: () => void;
+}
+
+export const NutriaCopilot: React.FC<NutriaCopilotProps> = ({
+  messages: initialMessages,
+  onSendMessage,
+  isLoading: externalLoading = false,
+  activePatient,
+  patientContext,
+  todayAppointments,
+  patientsCount,
+  monthlyRevenue,
+  monthlyExpenses,
+  isFloating = false,
+  onCloseFloating,
+  userAccount,
+  onOpenSubscriptionModal,
+  onOpenLoginModal,
+  onActionExecuted,
+  onClearMessages
+}) => {
+  const navigate = useNavigate();
+  const currentGreeting = getNutriaGreeting(userAccount);
+
+  // Gestão persistente de cota diária de mensagens
+  const [quotaStatus, setQuotaStatus] = useState<NutriaQuotaStatus>(() => getDailyNutriaUsage(userAccount));
+  const [showLimitModal, setShowLimitModal] = useState<boolean>(false);
+
+  // Sincroniza e verifica a cota diária contra novo dia / F5
+  useEffect(() => {
+    const updated = getDailyNutriaUsage(userAccount);
+    setQuotaStatus(updated);
+  }, [userAccount]);
+
+  // Estado local gerenciado das mensagens da conversa
+  const [messages, setMessages] = useState<NutriaMessage[]>(() => {
+    if (initialMessages && initialMessages.length > 0) {
+      if (initialMessages.length === 1 && initialMessages[0]?.role === 'assistant') {
+        const copy = [...initialMessages];
+        copy[0] = { ...copy[0], content: currentGreeting };
+        return copy;
+      }
+      return initialMessages;
+    }
+    return [{
+      id: 'msg-init-1',
+      role: 'assistant',
+      content: currentGreeting,
+      timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    }];
+  });
+
+  const [inputText, setInputText] = useState('');
+  const [internalLoading, setInternalLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(true);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const isLoading = internalLoading || externalLoading;
+
+  // Sincroniza mensagens externas imediatamente com o estado local
+  useEffect(() => {
+    if (initialMessages) {
+      if (initialMessages.length === 1 && initialMessages[0]?.role === 'assistant') {
+        const copy = [...initialMessages];
+        copy[0] = { ...copy[0], content: currentGreeting };
+        setMessages(copy);
+      } else {
+        setMessages(initialMessages);
+      }
+    }
+  }, [initialMessages, currentGreeting]);
+
+  // Atualiza saudação quando o perfil do profissional logado mudar
+  useEffect(() => {
+    setMessages(prev => {
+      if (!prev || prev.length === 0) {
+        return [{
+          id: 'msg-init-1',
+          role: 'assistant',
+          content: currentGreeting,
+          timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        }];
+      }
+      if (prev.length === 1 && prev[0].role === 'assistant') {
+        return [{
+          ...prev[0],
+          content: currentGreeting
+        }];
+      }
+      return prev;
+    });
+  }, [userAccount?.name, currentGreeting]);
+
+  const handleToggleSpeak = (msgId: string, content: string) => {
+    if (speakingMessageId === msgId) {
+      stopSpeech();
+      setSpeakingMessageId(null);
+    } else {
+      stopSpeech();
+      setSpeakingMessageId(msgId);
+      speakText(content, {
+        onStart: () => setSpeakingMessageId(msgId),
+        onEnd: () => setSpeakingMessageId(null),
+        onError: () => setSpeakingMessageId(null)
+      });
+    }
+  };
+
+  const isFree = !quotaStatus.isUnlimited;
+  const isMessageLimitReached = quotaStatus.isLimitReached;
+
+  // Reconhecimento de fala (Speech-to-Text)
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'pt-BR';
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript) {
+          setInputText(transcript);
+        }
+        setIsRecording(false);
+      };
+
+      recognition.onerror = (err: any) => {
+        console.warn('Aviso no reconhecimento de voz:', err);
+        setIsRecording(false);
+      };
+
+      recognition.onend = () => {
+        setIsRecording(false);
+      };
+
+      recognitionRef.current = recognition;
+    } else {
+      setVoiceSupported(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isLoading]);
+
+  const toggleRecording = () => {
+    if (!recognitionRef.current) return;
+    if (isRecording) {
+      recognitionRef.current.stop();
+      setIsRecording(false);
+    } else {
+      try {
+        recognitionRef.current.start();
+        setIsRecording(true);
+      } catch (err) {
+        console.error('Falha ao acionar microfone:', err);
+      }
+    }
+  };
+
+  const handleCopyMarkdown = (msgId: string, text: string) => {
+    const cleaned = cleanMathAndLatex(text);
+    navigator.clipboard.writeText(cleaned);
+    setCopiedMessageId(msgId);
+    setTimeout(() => setCopiedMessageId(null), 2500);
+  };
+
+  const handleDownloadReport = (content: string, id: string) => {
+    const cleaned = cleanMathAndLatex(content);
+    const header = `# NUTRINK - PARECER CLÍNICO NÚTRIA\nEmitido em: ${new Date().toLocaleString('pt-BR')}\n---\n\n`;
+    const fullText = header + cleaned;
+    const blob = new Blob([fullText], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Relatorio_NutrinK_NUTRIA_${id.slice(-6)}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePrintReport = (content: string) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    
+    const cleaned = cleanMathAndLatex(content);
+    const parsedHtml = marked.parse(cleaned);
+    
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>NutrinK - Relatório Clínico</title>
+          <meta charset="utf-8" />
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 40px; color: #1e1b4b; line-height: 1.7; max-width: 860px; margin: 0 auto; }
+            h1 { color: #5112a6; font-size: 22px; margin-top: 20px; margin-bottom: 8px; border-bottom: 2px solid #a855f7; padding-bottom: 8px; }
+            h2 { color: #6b21a8; font-size: 16px; margin-top: 24px; margin-bottom: 12px; }
+            h3 { color: #7e22ce; font-size: 14px; margin-top: 18px; margin-bottom: 8px; }
+            p { margin-bottom: 12px; font-size: 13.5px; }
+            table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 13px; border-radius: 8px; overflow: hidden; }
+            th, td { border: 1px solid #e9d5ff; padding: 10px 14px; text-align: left; }
+            th { background-color: #f3e8ff; font-weight: bold; color: #581c87; }
+            tr:nth-child(even) { background-color: #faf5ff; }
+            hr { border: none; border-top: 1px solid #d8b4fe; margin: 24px 0; }
+            blockquote { border-left: 4px solid #a855f7; margin: 16px 0; padding: 10px 16px; background-color: #faf5ff; color: #581c87; font-style: italic; border-radius: 0 8px 8px 0; }
+            ul, ol { padding-left: 24px; margin-bottom: 14px; font-size: 13.5px; }
+            li { margin-bottom: 6px; }
+            strong { color: #1e1b4b; font-weight: bold; }
+            @media print {
+              body { padding: 20px; }
+              @page { margin: 1.5cm; }
+            }
+          </style>
+        </head>
+        <body>
+          <div>${parsedHtml}</div>
+          <script>
+            window.onload = function() { window.print(); }
+          </script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
+  /**
+   * Envia mensagem do usuário diretamente para a NUTRIA AI via Gemini 3.7 Flash
+   * (Sem servidor intermediário, sem risco de tela em branco)
+   */
+  const handleSendMessage = async (rawInput: string) => {
+    const input = rawInput.trim();
+    if (!input || isLoading) return;
+
+    // Se a cota estiver esgotada para o plano gratuito, impede o envio e abre o modal/alerta
+    const currentQuota = getDailyNutriaUsage(userAccount);
+    if (currentQuota.isLimitReached) {
+      setShowLimitModal(true);
+      return;
+    }
+
+    trackNutriaInteraction('send_message', { length: input.length });
+
+    // 1. Adiciona imediatamente a mensagem do usuário ao estado local de mensagens
+    const userMsg: NutriaMessage = {
+      id: `msg-${Date.now()}`,
+      role: 'user',
+      content: input,
+      timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setMessages(prev => [...prev, userMsg]);
+    setInputText('');
+
+    // Se o componente pai fornecer callback onSendMessage, delega para a gestão central
+    if (onSendMessage) {
+      try {
+        await onSendMessage(input);
+        const updated = getDailyNutriaUsage(userAccount);
+        setQuotaStatus(updated);
+        if (updated.isLimitReached) {
+          setShowLimitModal(true);
+        }
+      } catch (callbackErr) {
+        console.warn('Aviso na execução do callback pai onSendMessage:', callbackErr);
+      }
+      return;
+    }
+
+    // Incrementa cota diária persistente no armazenamento local
+    const nextQuota = incrementDailyNutriaUsage(userAccount);
+    setQuotaStatus(nextQuota);
+    setInternalLoading(true);
+
+    try {
+      const patientData = activePatient || patientContext || null;
+
+      // Chamada direta para a API oficial do Gemini com modelo Gemini 3.7 Flash
+      const result = await callNutriaDirect({
+        message: input,
+        activePatient: patientData,
+        patientContext: patientData,
+        appointments: todayAppointments,
+        userAccount: userAccount,
+        appContext: {
+          patientsCount: patientsCount,
+          todayAppointmentsCount: todayAppointments ? todayAppointments.length : undefined,
+          monthlyRevenue: monthlyRevenue,
+          monthlyExpenses: monthlyExpenses,
+          userPlan: userAccount?.plan
+        },
+        conversationHistory: messages.slice(-8).map(m => ({
+          role: m.role,
+          content: m.content
+        }))
+      });
+
+      const replyText = result.reply || "Solicitação processada com sucesso no ecossistema NutrinK.";
+
+      const assistantMsg: NutriaMessage = {
+        id: `msg-${Date.now() + 1}`,
+        role: 'assistant',
+        content: replyText,
+        timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        actionExecuted: result.actionExecuted
+      };
+
+      // Adiciona ao estado do chat sem sobrescrever a tela
+      setMessages(prev => [...prev, assistantMsg]);
+
+      // Se houver uma ação executada retornada pela IA (ex: agendamento, cadastro), notifica
+      if (result.actionExecuted && onActionExecuted) {
+        onActionExecuted(result.actionExecuted);
+      }
+    } catch (err: any) {
+      console.error(err);
+      console.error('Erro na comunicação com a NÚTRIA AI (Gemini 3.7 Flash):', err?.message || err);
+
+      const errorMessage: NutriaMessage = {
+        id: `msg-${Date.now() + 1}`,
+        role: 'assistant',
+        content: `Desculpe, ocorreu uma instabilidade na comunicação com a IA: ${err?.message ? `(${err.message})` : 'verifique o console para detalhes'}. Por favor, tente enviar novamente.`,
+        timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      };
+
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setInternalLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputText.trim() || isLoading) return;
+    await handleSendMessage(inputText);
+  };
+
+  const clinicalPromptTemplates = [
+    {
+      title: "Genômica & Polimorfismos",
+      icon: Dna,
+      prompt: "NÚTRIA, estruture uma conduta clínica e de suplementação personalizada para um paciente com polimorfismo MTHFR C677T em homozigose e portador do alelo APOE ε4."
+    },
+    {
+      title: "Interpretação de Exames",
+      icon: HeartPulse,
+      prompt: "NÚTRIA, interprete e cruze clinicamente estes exames: Ferritina 18 ng/mL, Vitamina B12 210 pg/mL, Vitamina D 22 ng/mL, Glicemia 98 mg/dL e Insulina 14 uIU/mL (calcule HOMA-IR, HOMA-B e conduta)."
+    },
+    {
+      title: "Interações Droga-Nutriente",
+      icon: Pill,
+      prompt: "NÚTRIA, audite e descreva as interações fármaco-nutriente e depleções induzidas pelo uso contínuo de Metformina, Estatinas e Omeprazol."
+    },
+    {
+      title: "Plano Alimentar & TACO",
+      icon: Flame,
+      prompt: activePatient 
+        ? `NÚTRIA, elabore um plano alimentar estruturado em tabelas markdown para ${activePatient.name}, com meta de ${activePatient.get || 2000} kcal, gramaturas exatas baseadas na TACO/IBGE e distribuição para ${activePatient.objective || 'Geral'}.`
+        : "NÚTRIA, monte um plano alimentar diário grama a grama baseado nas tabelas TACO e IBGE para hipertrofia (2.600 kcal, 2.0g/kg de proteína para 78kg)."
+    },
+    {
+      title: "Estoque de Suplementos",
+      icon: Package,
+      prompt: "NÚTRIA, consulte o estoque do consultório e informe se há insumos com saldo zerado ou em nível crítico."
+    },
+    {
+      title: "Financeiro & Faturamento",
+      icon: DollarSign,
+      prompt: "NÚTRIA, apresente o relatório de fluxo de caixa, faturamento do mês e saldo líquido consolidado do consultório."
+    },
+    {
+      title: "Agenda & Consultas",
+      icon: Calendar,
+      prompt: "NÚTRIA, liste os horários livres e a grade de atendimentos da agenda do consultório para hoje e próximos dias."
+    },
+    {
+      title: "Pacientes & Prontuários",
+      icon: UserPlus,
+      prompt: "NÚTRIA, carregue o resumo da base de pacientes cadastrados e me mostre atalhos para cadastrar ou gerenciar prontuários."
+    },
+    {
+      title: "NutriCalc & TMB/GET",
+      icon: Calculator,
+      prompt: "NÚTRIA, calcule a Taxa Metabólica Basal por Mifflin-St Jeor e Cunningham para um homem de 32 anos, 84kg, 180cm e 16% de gordura."
+    }
+  ];
+
+  return (
+    <div className={`flex flex-col bg-[#150328] border border-purple-900/50 rounded-3xl shadow-2xl overflow-hidden ${isFloating ? 'h-[640px] max-h-[88vh]' : 'h-[760px] max-h-[88vh]'}`}>
+      
+      {/* Header Bar */}
+      <div className="bg-[#1b0534] border-b border-purple-900/40 p-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <NutriaAvatar
+            size="lg"
+            className="w-10 h-10 rounded-2xl shadow-lg shadow-fuchsia-950/60 border border-fuchsia-400/40 object-cover shrink-0"
+          />
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="font-black text-sm text-white tracking-wide">NÚTRIA • Copiloto NutrinK</h2>
+              <span className="w-2 h-2 rounded-full bg-fuchsia-400 animate-pulse"></span>
+            </div>
+            <p className="text-[11px] text-purple-200 font-medium">
+              {activePatient ? `Contexto Ativo: ${activePatient.name} (${activePatient.objective || 'Clínico'})` : 'Inteligência Artificial & Copiloto Clínico em Tempo Real'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => {
+              if (onClearMessages) {
+                onClearMessages();
+              } else {
+                setMessages([{
+                  id: 'msg-init-1',
+                  role: 'assistant',
+                  content: currentGreeting,
+                  timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+                }]);
+              }
+            }}
+            className="p-1.5 text-purple-300 hover:text-white rounded-xl hover:bg-[#250847] text-xs font-semibold flex items-center gap-1 cursor-pointer transition-all border border-purple-800/40"
+            title="Iniciar nova conversa e limpar histórico local"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden sm:inline text-[10px]">Nova Conversa</span>
+          </button>
+
+          {isFloating && onCloseFloating && (
+            <button
+              onClick={onCloseFloating}
+              className="p-1.5 text-purple-300 hover:text-white rounded-xl hover:bg-[#250847] text-sm font-bold cursor-pointer transition-all"
+              title="Fechar chat flutuante"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Quick Clinical Shortcuts Strip */}
+      <div className="bg-[#120326] border-b border-purple-900/40 px-3 py-2 flex items-center gap-2 overflow-x-auto scrollbar-none">
+        <span className="text-[10px] font-bold uppercase text-purple-300 shrink-0">Modelos Clínicos:</span>
+        {clinicalPromptTemplates.map((template, idx) => {
+          const Icon = template.icon;
+          return (
+            <button
+              key={idx}
+              onClick={() => setInputText(template.prompt)}
+              className="px-3 py-1 rounded-xl bg-[#220743] hover:bg-[#2f0b5a] border border-purple-700/50 text-[11px] font-bold text-purple-200 hover:text-fuchsia-300 whitespace-nowrap flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
+            >
+              <Icon className="w-3 h-3 text-fuchsia-400" />
+              <span>{template.title}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Messages Scroll Area - Renderiza a lista de balões entre Usuário e Assistente */}
+      <div className="flex-1 p-3.5 sm:p-5 overflow-y-auto overflow-x-hidden space-y-4 text-xs sm:text-sm w-full max-w-full box-border">
+        
+        {messages.length === 0 ? (
+          <div className="py-8 text-center space-y-4 max-w-lg mx-auto w-full px-2 box-border">
+            <div className="w-14 h-14 rounded-2xl bg-purple-950/60 border border-fuchsia-500/40 text-fuchsia-400 flex items-center justify-center mx-auto shadow-md shadow-fuchsia-950/40">
+              <FileText className="w-7 h-7" />
+            </div>
+            <div>
+              <h3 className="font-bold text-base text-white">NÚTRIA: Copiloto de Documentos & Clínica</h3>
+              <p className="text-xs text-purple-200 mt-1 leading-relaxed font-medium">
+                Todas as respostas são geradas em <strong className="text-white">texto estruturado em tempo real</strong>, tabelas de macronutrientes, cálculos metabólicos e pareceres prontos para exportação em Markdown ou impressão em PDF.
+              </p>
+            </div>
+
+            {/* Quick Prompts */}
+            <div className="space-y-2 pt-2 text-left w-full max-w-full box-border">
+              <span className="text-[11px] font-bold uppercase text-purple-300 block text-center">
+                Exemplos de Comandos Clínicos e Operacionais:
+              </span>
+              <div className="grid grid-cols-1 gap-1.5 w-full max-w-full">
+                {clinicalPromptTemplates.map((tmpl, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setInputText(tmpl.prompt);
+                    }}
+                    className="p-3 rounded-2xl bg-[#1d0637] hover:bg-[#250847] border border-purple-800/40 text-left text-xs text-purple-100 transition-all flex items-center justify-between group shadow-sm cursor-pointer w-full max-w-full box-border min-w-0"
+                  >
+                    <span className="truncate pr-2 font-medium min-w-0">{tmpl.prompt}</span>
+                    <ArrowRight className="w-3.5 h-3.5 text-fuchsia-400 shrink-0 opacity-70 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          messages.map((msg) => {
+            const isUser = msg.role === 'user';
+            return (
+              <div
+                key={msg.id}
+                className={`flex gap-2 sm:gap-3 w-full max-w-full min-w-0 box-border ${isUser ? 'justify-end' : 'justify-start'}`}
+              >
+                {!isUser && (
+                  <NutriaAvatar
+                    size="sm"
+                    className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl shrink-0 shadow-md border border-fuchsia-400/40 mt-0.5 object-cover"
+                  />
+                )}
+
+                <div 
+                  className={`min-w-0 max-w-[92%] sm:max-w-[85%] rounded-3xl p-3.5 sm:p-4 space-y-3 shadow-md box-border break-words [overflow-wrap:anywhere] [word-break:break-word] ${
+                    isUser
+                      ? 'bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white rounded-tr-none border border-fuchsia-400/30'
+                      : 'bg-[#1d0637] text-purple-100 border border-purple-800/50 rounded-tl-none'
+                  }`}
+                  style={{
+                    maxWidth: '92%',
+                    overflowWrap: 'break-word',
+                    wordBreak: 'break-word',
+                    boxSizing: 'border-box'
+                  }}
+                >
+                  
+                  {/* Message Content formatted with Markdown tables */}
+                  <div className="leading-relaxed text-xs sm:text-sm font-sans text-purple-100 space-y-2.5 w-full max-w-full min-w-0 box-border break-words [overflow-wrap:anywhere] [word-break:break-word]">
+                    {isUser ? (
+                      <p className="whitespace-pre-wrap font-medium break-words [overflow-wrap:anywhere] [word-break:break-word] max-w-full">
+                        {msg.content}
+                      </p>
+                    ) : (
+                      <div className="markdown-content space-y-3 w-full max-w-full min-w-0 box-border break-words [overflow-wrap:anywhere] [word-break:break-word]">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            h1: ({ node, ...props }) => <h1 className="text-base sm:text-lg font-black text-fuchsia-300 border-b border-purple-700/60 pb-2 mt-4 mb-3 flex items-center gap-1.5 break-words [overflow-wrap:anywhere] max-w-full" {...props} />,
+                            h2: ({ node, ...props }) => <h2 className="text-sm sm:text-base font-bold text-white mt-4 mb-2 flex items-center gap-1.5 break-words [overflow-wrap:anywhere] max-w-full" {...props} />,
+                            h3: ({ node, ...props }) => <h3 className="text-xs sm:text-sm font-bold text-fuchsia-200 mt-3 mb-1.5 break-words [overflow-wrap:anywhere] max-w-full" {...props} />,
+                            p: ({ node, ...props }) => <p className="leading-relaxed text-purple-100 text-xs sm:text-sm my-1.5 break-words [overflow-wrap:anywhere] [word-break:break-word] max-w-full" {...props} />,
+                            strong: ({ node, ...props }) => <strong className="font-bold text-white break-words [overflow-wrap:anywhere]" {...props} />,
+                            em: ({ node, ...props }) => <em className="italic text-purple-200 break-words [overflow-wrap:anywhere]" {...props} />,
+                            ul: ({ node, ...props }) => <ul className="list-disc pl-5 space-y-1.5 text-purple-200 my-2 break-words [overflow-wrap:anywhere] max-w-full" {...props} />,
+                            ol: ({ node, ...props }) => <ol className="list-decimal pl-5 space-y-1.5 text-purple-200 my-2 break-words [overflow-wrap:anywhere] max-w-full" {...props} />,
+                            li: ({ node, ...props }) => <li className="leading-relaxed break-words [overflow-wrap:anywhere] max-w-full" {...props} />,
+                            hr: ({ node, ...props }) => <hr className="border-purple-800/70 my-3.5 w-full max-w-full border-t border-b-0 border-x-0 overflow-hidden" {...props} />,
+                            table: ({ node, ...props }) => (
+                              <div className="w-full max-w-full overflow-x-auto my-3.5 rounded-xl border border-purple-700/60 bg-[#120326] shadow-sm box-border">
+                                <table className="w-full text-left text-[11px] sm:text-xs border-collapse min-w-[300px]" {...props} />
+                              </div>
+                            ),
+                            thead: ({ node, ...props }) => <thead className="bg-[#280a4f] text-fuchsia-300 font-bold border-b border-purple-700/80" {...props} />,
+                            tbody: ({ node, ...props }) => <tbody className="divide-y divide-purple-900/50" {...props} />,
+                            tr: ({ node, ...props }) => <tr className="hover:bg-purple-950/40 transition-colors" {...props} />,
+                            th: ({ node, ...props }) => <th className="py-2.5 px-3 font-bold text-fuchsia-300 text-left border-r border-purple-800/40 last:border-r-0 whitespace-nowrap" {...props} />,
+                            td: ({ node, ...props }) => <td className="py-2 px-3 text-purple-100 border-r border-purple-900/40 last:border-r-0 break-words" {...props} />,
+                            pre: ({ node, ...props }) => (
+                              <pre className="w-full max-w-full overflow-x-auto my-2.5 rounded-xl bg-[#0f021f] border border-purple-800/70 p-3 text-[11px] sm:text-xs font-mono text-purple-200 whitespace-pre box-border" {...props} />
+                            ),
+                            code: ({ node, inline, className, children, ...props }: any) => (
+                              <code className={`bg-[#120326] px-1.5 py-0.5 rounded text-fuchsia-300 text-[11px] font-mono border border-purple-800/50 break-all max-w-full ${className || ''}`} {...props}>
+                                {children}
+                              </code>
+                            ),
+                            blockquote: ({ node, ...props }) => <blockquote className="border-l-4 border-fuchsia-500 pl-3.5 py-1.5 bg-purple-950/40 text-purple-100 italic my-3 rounded-r-xl border-y border-r border-purple-900/30 text-xs sm:text-sm break-words [overflow-wrap:anywhere] max-w-full box-border" {...props} />
+                          }}
+                        >
+                          {cleanMathAndLatex(msg.content)}
+                        </ReactMarkdown>
+
+                        {/* Interactive Upgrade CTA Button if message deals with plans */}
+                        {(msg.content.includes('limite de mensagens do Plano Gratuito') || 
+                          msg.content.includes('Planos de Assinatura') || 
+                          msg.content.includes('Plano Premium') ||
+                          msg.content.includes('Painel de Assinaturas')) && onOpenSubscriptionModal && (
+                          <div className="mt-4 pt-3 border-t border-purple-800/50 flex flex-wrap items-center gap-2.5 w-full max-w-full box-border">
+                            <button
+                              onClick={onOpenSubscriptionModal}
+                              className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 via-fuchsia-600 to-purple-600 hover:from-amber-400 hover:to-fuchsia-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-purple-950/60 border border-fuchsia-400/40 transition-all cursor-pointer max-w-full min-w-0"
+                            >
+                              <Crown className="w-4 h-4 text-amber-200 shrink-0" />
+                              <span className="truncate">Ver Planos & Desbloquear Acesso Completo</span>
+                              <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+                            </button>
+                            <span className="text-[11px] text-purple-300">
+                              A partir de <strong>R$ 89,90/mês</strong> ou <strong>R$ 899,00/ano</strong> (7 dias de teste grátis sem cartão)
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Visual Tool Action Confirmation Badge if executed */}
+                  {msg.actionExecuted && (
+                    <div className="mt-3 p-3 rounded-2xl bg-[#120326] border border-fuchsia-500/50 text-xs text-fuchsia-300 space-y-1 w-full max-w-full box-border min-w-0 break-words">
+                      <div className="flex items-center gap-1.5 font-bold">
+                        <CheckCircle2 className="w-4 h-4 text-fuchsia-400 shrink-0" />
+                        <span className="truncate">Ação Executada no NutrinK:</span>
+                      </div>
+                      <p className="text-purple-200 break-words [overflow-wrap:anywhere]">{msg.actionExecuted.summary}</p>
+                    </div>
+                  )}
+
+                  {/* Message Footer with Document Export Tools */}
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-purple-300 pt-2 border-t border-purple-900/40 w-full max-w-full box-border">
+                    <span className="font-medium shrink-0">{msg.timestamp}</span>
+                    
+                    {!isUser && (
+                      <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+                        {/* Audio TTS Speech Playback */}
+                        <button
+                          onClick={() => handleToggleSpeak(msg.id, msg.content)}
+                          className={`flex items-center gap-1 px-2 py-0.5 rounded-lg transition-all font-semibold cursor-pointer ${
+                            speakingMessageId === msg.id
+                              ? 'bg-fuchsia-600 text-white animate-pulse'
+                              : 'text-purple-300 hover:text-white hover:bg-[#250847]'
+                          }`}
+                          title={speakingMessageId === msg.id ? 'Parar leitura de voz' : 'Ouvir parecer com voz humanizada'}
+                        >
+                          {speakingMessageId === msg.id ? (
+                            <>
+                              <VolumeX className="w-3.5 h-3.5 text-white" />
+                              <span className="text-[10px]">Ouvindo</span>
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="w-3.5 h-3.5" />
+                              <span className="text-[10px]">Ouvir Voz</span>
+                            </>
+                          )}
+                        </button>
+
+                        {/* Copy Markdown */}
+                        <button
+                          onClick={() => handleCopyMarkdown(msg.id, msg.content)}
+                          className="hover:text-fuchsia-300 flex items-center gap-1 px-2 py-0.5 rounded-lg hover:bg-[#250847] transition-all font-semibold cursor-pointer"
+                          title="Copiar texto em Markdown limpo"
+                        >
+                          {copiedMessageId === msg.id ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-fuchsia-300" />
+                              <span className="text-fuchsia-300 font-bold text-[10px]">Copiado</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5" />
+                              <span className="text-[10px]">Copiar</span>
+                            </>
+                          )}
+                        </button>
+
+                        {/* Print Document */}
+                        <button
+                          onClick={() => handlePrintReport(msg.content)}
+                          className="hover:text-white flex items-center gap-1 px-2 py-0.5 rounded-lg hover:bg-[#250847] transition-all font-semibold cursor-pointer"
+                          title="Imprimir ou salvar como PDF"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span className="text-[10px]">Imprimir</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+
+        {isLoading && (
+          <div className="flex items-center gap-3">
+            <img
+              src="/icon-512.svg"
+              alt="NÚTRIA"
+              className="w-8 h-8 rounded-xl shrink-0 shadow-md border border-fuchsia-400/40 object-cover animate-pulse"
+            />
+            <div className="p-3.5 bg-[#1d0637] rounded-2xl border border-purple-800/40 text-xs text-purple-200 flex items-center gap-2 font-medium">
+              <RefreshCw className="w-3.5 h-3.5 text-fuchsia-400 animate-spin" />
+              <span>NÚTRIA processando em tempo real com o modelo de inteligência artificial...</span>
+            </div>
+          </div>
+        )}
+
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* Input Form & Speech Dictation Input */}
+      <div className="p-3 sm:p-4 bg-[#1b0534] border-t border-purple-900/40">
+        
+        {/* Alerta Preventivo nas últimas 5 mensagens (Mensagens 25 a 29) */}
+        {quotaStatus.isWarningZone && (
+          <div className="mb-3 p-3 bg-gradient-to-r from-amber-950/90 via-[#2f0b54] to-amber-950/90 border border-amber-500/70 text-amber-200 rounded-2xl text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-lg shadow-black/40 animate-fadeIn">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+              <div>
+                <p className="text-[11px] sm:text-xs text-amber-100 font-medium">
+                  <strong>Atenção:</strong> Restam apenas <strong>{quotaStatus.remaining} {quotaStatus.remaining === 1 ? 'mensagem' : 'mensagens'}</strong> no seu limite gratuito diário ({quotaStatus.count}/30). Assine o plano Premium para mensagens ilimitadas ou aguarde o dia de amanhã.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (onOpenSubscriptionModal) onOpenSubscriptionModal();
+                else navigate('/planos');
+              }}
+              className="px-3 py-1 rounded-xl bg-gradient-to-r from-amber-500 to-fuchsia-600 hover:from-amber-400 hover:to-fuchsia-500 text-slate-950 font-black text-xs shadow-md shrink-0 cursor-pointer self-end sm:self-center"
+            >
+              Fazer Upgrade ⭐
+            </button>
+          </div>
+        )}
+
+        {/* Alerta Definitivo de Travamento ao Atingir 30 Mensagens */}
+        {quotaStatus.isLimitReached && (
+          <div className="mb-3 p-3.5 bg-gradient-to-r from-rose-950/95 via-[#2f0b54] to-purple-950/95 border border-rose-500/80 text-rose-100 rounded-2xl text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xl shadow-black/50 animate-fadeIn">
+            <div className="flex items-start sm:items-center gap-2.5">
+              <div className="p-1.5 rounded-xl bg-rose-600/30 border border-rose-500/50 text-rose-300 shrink-0">
+                <Lock className="w-4 h-4" />
+              </div>
+              <div>
+                <span className="font-bold text-white text-xs sm:text-sm block">
+                  Seu limite de 30 mensagens diárias da NÚTRIA IA acabou.
+                </span>
+                <p className="text-[11px] text-purple-200/90 mt-0.5">
+                  Faça o upgrade para o plano Premium para continuar ou aguarde até amanhã.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onOpenSubscriptionModal) onOpenSubscriptionModal();
+                  else navigate('/planos');
+                }}
+                className="w-full sm:w-auto px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-fuchsia-600 via-purple-600 to-indigo-600 hover:from-fuchsia-500 hover:to-purple-500 text-white font-bold text-xs shadow-lg shadow-fuchsia-950/60 border border-fuchsia-400/50 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Crown className="w-3.5 h-3.5 text-amber-300" />
+                <span>Planos & Assinaturas</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isRecording && (
+          <div className="mb-2 p-2 bg-rose-950/90 border border-rose-600 text-rose-200 rounded-2xl text-xs flex items-center justify-between animate-pulse">
+            <span className="flex items-center gap-2 font-semibold">
+              <span className="w-2 h-2 rounded-full bg-rose-400 animate-ping"></span>
+              Ditando comando para o texto... Fale com a Nútria.
+            </span>
+            <button onClick={toggleRecording} className="font-bold underline text-white cursor-pointer">
+              Parar
+            </button>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="flex items-center gap-2">
+          
+          {voiceSupported && (
+            <button
+              type="button"
+              onClick={toggleRecording}
+              disabled={quotaStatus.isLimitReached || isLoading}
+              className={`p-3 rounded-2xl border transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                isRecording
+                  ? 'bg-rose-600 text-white border-rose-500 animate-pulse'
+                  : 'bg-[#220743] text-purple-200 hover:text-white border-purple-700/60 hover:bg-[#2f0b5a]'
+              }`}
+              title={isRecording ? 'Parar gravação' : (quotaStatus.isLimitReached ? 'Limite diário atingido' : 'Ditar comando de voz para a NÚTRIA')}
+            >
+              {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+          )}
+
+          <input
+            type="text"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            placeholder={
+              quotaStatus.isLimitReached 
+                ? 'Limite diário atingido (30/30)'
+                : (isRecording ? 'Ouvindo...' : 'Solicite prontuários, planos alimentares, exames ou cálculos clínicos à NÚTRIA...')
+            }
+            disabled={quotaStatus.isLimitReached || isLoading}
+            className="flex-1 bg-[#120326] border border-purple-700/60 rounded-2xl px-4 py-2.5 text-xs sm:text-sm text-white placeholder-purple-300/60 focus:outline-none focus:border-fuchsia-400 disabled:opacity-50 disabled:bg-[#0c021a] disabled:cursor-not-allowed"
+          />
+
+          <button
+            type="submit"
+            disabled={quotaStatus.isLimitReached || isLoading || !inputText.trim()}
+            className="p-3 bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-2xl font-bold shadow-md shadow-fuchsia-950/60 transition-all flex items-center justify-center shrink-0 border border-fuchsia-400/30 cursor-pointer"
+          >
+            <Send className="w-4 h-4" />
+          </button>
+        </form>
+
+        <div className="flex items-center justify-between text-[10px] text-purple-300/80 mt-2 px-1 font-medium gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="truncate">NutrinK AI Ecosystem • Respostas em tempo real</span>
+            {!quotaStatus.isUnlimited && (
+              <span className={`font-bold text-[9px] leading-none px-1.5 py-0.5 rounded border mr-2.5 shrink-0 inline-flex items-center ${
+                quotaStatus.isLimitReached 
+                  ? 'bg-rose-950/80 text-rose-300 border-rose-500/40' 
+                  : quotaStatus.isWarningZone
+                    ? 'bg-amber-950/80 text-amber-300 border-amber-500/40 animate-pulse'
+                    : 'bg-purple-950/70 text-purple-200 border-purple-700/40'
+              }`}>
+                {quotaStatus.count}/{quotaStatus.limit} msgs hoje
+              </span>
+            )}
+          </div>
+          <span className="shrink-0">NÚTRIA v2.5</span>
+        </div>
+      </div>
+
+      {/* Modal Definitivo de Limite Atingido (30 Mensagens) */}
+      {showLimitModal && quotaStatus.isLimitReached && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-gradient-to-b from-[#1c063b] to-[#120324] border border-purple-700/80 rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl text-center animate-scaleUp">
+            <div className="w-14 h-14 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-400 flex items-center justify-center mx-auto shadow-inner">
+              <Lock className="w-7 h-7" />
+            </div>
+
+            <div className="space-y-1.5">
+              <h3 className="text-lg font-black text-white">
+                Limite Diário Atingido (30/30)
+              </h3>
+              <p className="text-xs sm:text-sm text-purple-200/90 leading-relaxed">
+                Seu limite de 30 mensagens diárias da NÚTRIA IA acabou. Faça o upgrade para o plano Premium para continuar ou aguarde até amanhã.
+              </p>
+            </div>
+
+            <div className="bg-[#180532] border border-purple-800/50 rounded-2xl p-3 text-left space-y-2 text-xs">
+              <div className="flex items-center gap-2 text-amber-300 font-bold">
+                <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Vantagens do Plano Premium:</span>
+              </div>
+              <ul className="space-y-1 text-purple-200/90 text-[11px] pl-5 list-disc">
+                <li>Mensagens e pareceres clínicos 100% ilimitados</li>
+                <li>Cálculos de VET, GEB, GET e macronutrientes sem travas</li>
+                <li>Emissão de dietas, prontuários e prescrições ilimitadas</li>
+              </ul>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowLimitModal(false)}
+                className="w-full sm:w-1/3 py-2.5 rounded-xl bg-[#20063e] hover:bg-[#2b0852] text-purple-300 text-xs font-bold cursor-pointer"
+              >
+                Fechar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLimitModal(false);
+                  if (onOpenSubscriptionModal) onOpenSubscriptionModal();
+                  else navigate('/planos');
+                }}
+                className="w-full sm:w-2/3 py-2.5 rounded-xl bg-gradient-to-r from-fuchsia-600 via-purple-600 to-indigo-600 hover:from-fuchsia-500 hover:to-purple-500 text-white text-xs font-black shadow-lg shadow-fuchsia-950/60 border border-fuchsia-400/40 cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Crown className="w-3.5 h-3.5 text-amber-300" />
+                <span>Planos & Assinaturas</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+};

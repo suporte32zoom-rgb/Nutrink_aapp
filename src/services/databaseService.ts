@@ -1,0 +1,720 @@
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  getDoc, 
+  setDoc, 
+  getDocs, 
+  query, 
+  where, 
+  orderBy, 
+  deleteDoc, 
+  onSnapshot,
+  serverTimestamp,
+  Timestamp 
+} from 'firebase/firestore';
+import { Patient, Appointment, FinancialTransaction, UserAccount, NutriaMessage, InventoryItem, StockMovement } from '../types';
+import { INITIAL_INVENTORY_ITEMS } from '../data/inventorySeedData';
+
+// Load Firebase Firestore configuration via environment variables
+const firebaseConfig = {
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0157446519",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:193329003759:web:b4922d6b2c9545104e6f1a",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
+  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-remixnutrinknutr-51d08cbc-daf3-4ec1-978f-d4e0c04f216a",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "gen-lang-client-0157446519.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "193329003759"
+};
+
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+
+/**
+ * Handle Google Profile Authentication (Native Google Identity Services / GSI / OAuth 2.0)
+ * Automatically checks and registers account in database if first access, merges profile data,
+ * and persists to Firestore.
+ */
+export async function handleGoogleProfileAuth(profile: {
+  email: string;
+  name?: string;
+  picture?: string;
+  sub?: string;
+  id?: string;
+  uid?: string;
+}): Promise<UserAccount> {
+  const cleanEmail = (profile.email || '').trim().toLowerCase();
+  if (!cleanEmail) {
+    throw new Error('E-mail não fornecido pelo Google.');
+  }
+  const name = (profile.name || 'Profissional de Saúde').trim();
+  const avatarUrl = profile.picture || undefined;
+  const googleId = profile.sub || profile.id || profile.uid || '';
+
+  // Check if existing profile in Firestore
+  let existing = await getProfileByEmail(cleanEmail);
+  if (!existing) {
+    try {
+      const raw = localStorage.getItem('nutrink_registered_users');
+      if (raw) {
+        const list = JSON.parse(raw);
+        existing = list.find((u: any) => u.email?.trim().toLowerCase() === cleanEmail) || null;
+      }
+    } catch {}
+  }
+
+  let finalUser: UserAccount;
+  if (existing) {
+    finalUser = {
+      ...existing,
+      name: existing.name || name,
+      avatarUrl: avatarUrl || existing.avatarUrl,
+      authProvider: 'google',
+      googleId: googleId || existing.googleId
+    };
+  } else {
+    // Automatically create account on first access
+    finalUser = {
+      id: `usr-g-${Date.now()}`,
+      name: name,
+      email: cleanEmail,
+      crn: 'CRN Ativo',
+      specialty: 'Nutrição Clínica & Funcional',
+      plan: 'free',
+      isSubscribed: false,
+      dailyMessageCount: 0,
+      dailyMessageLimit: 10,
+      monthlyMessageCount: 0,
+      monthlyMessageLimit: 50,
+      activeSince: new Date().getFullYear().toString(),
+      avatarUrl: avatarUrl,
+      authProvider: 'google',
+      googleId: googleId
+    };
+  }
+
+  // Non-blocking background save to Firestore
+  saveProfile(finalUser).catch(err => console.warn('Sync profile to Firestore:', err));
+
+  // Sync to local registered users list and immediate active session
+  try {
+    const raw = localStorage.getItem('nutrink_registered_users');
+    const list = raw ? JSON.parse(raw) : [];
+    const idx = list.findIndex((u: any) => u.email?.trim().toLowerCase() === cleanEmail);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...finalUser };
+    } else {
+      list.push(finalUser);
+    }
+    localStorage.setItem('nutrink_registered_users', JSON.stringify(list));
+    localStorage.setItem('nutrink_last_email', cleanEmail);
+    localStorage.setItem('nutrink_user_session', JSON.stringify(finalUser));
+  } catch (err) {
+    console.warn('Local storage sync warn:', err);
+  }
+
+  return finalUser;
+}
+
+
+/**
+ * Recursively removes `undefined` properties and replaces undefined elements in arrays
+ * to ensure Firestore setDoc/updateDoc never fails with 'Unsupported field value: undefined'.
+ */
+export function sanitizeForFirestore<T>(data: T): any {
+  if (data === undefined) {
+    return null;
+  }
+  if (data === null || typeof data !== 'object') {
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return data.map(item => (item === undefined ? null : sanitizeForFirestore(item)));
+  }
+  const clean: Record<string, any> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) {
+      clean[key] = sanitizeForFirestore(value);
+    }
+  }
+  return clean;
+}
+
+/**
+ * PROFILES SERVICE
+ * Maps to 'profiles' collection
+ */
+export async function getProfileByEmail(email: string): Promise<UserAccount | null> {
+  if (!email) return null;
+  const cleanEmail = email.trim().toLowerCase();
+  try {
+    const docRef = doc(db, 'profiles', cleanEmail);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data() as UserAccount;
+    }
+  } catch (err) {
+    console.warn('[DB Error getProfileByEmail]:', err);
+  }
+  return null;
+}
+
+export async function saveProfile(profile: Partial<UserAccount> & { email: string }): Promise<void> {
+  if (!profile.email) return;
+  const cleanEmail = profile.email.trim().toLowerCase();
+  try {
+    const docRef = doc(db, 'profiles', cleanEmail);
+    const cleanData = sanitizeForFirestore({
+      ...profile,
+      email: cleanEmail,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(docRef, cleanData, { merge: true });
+  } catch (err) {
+    console.error('[DB Error saveProfile]:', err);
+  }
+}
+
+/**
+ * PATIENTS SERVICE
+ * Maps to 'patients' collection
+ */
+export async function getPatientsByUser(userEmail: string): Promise<Patient[]> {
+  if (!userEmail) return [];
+  const cleanEmail = userEmail.trim().toLowerCase();
+  try {
+    const q = query(
+      collection(db, 'patients'),
+      where('userEmail', '==', cleanEmail)
+    );
+    const snapshot = await getDocs(q);
+    const list: Patient[] = [];
+    snapshot.forEach(docSnap => {
+      list.push(docSnap.data() as Patient);
+    });
+    return list;
+  } catch (err) {
+    console.warn('[DB Error getPatientsByUser]:', err);
+    return [];
+  }
+}
+
+export async function savePatient(patient: Patient, userEmail: string): Promise<void> {
+  if (!patient.id || !userEmail) return;
+  const cleanEmail = userEmail.trim().toLowerCase();
+  try {
+    const docRef = doc(db, 'patients', patient.id);
+    const cleanData = sanitizeForFirestore({
+      ...patient,
+      userEmail: cleanEmail,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(docRef, cleanData, { merge: true });
+  } catch (err) {
+    console.error('[DB Error savePatient]:', err);
+  }
+}
+
+export async function deletePatientFromDb(patientId: string): Promise<void> {
+  if (!patientId) return;
+  try {
+    const docRef = doc(db, 'patients', patientId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.error('[DB Error deletePatient]:', err);
+  }
+}
+
+/**
+ * APPOINTMENTS & AGENDA SERVICE
+ * Maps to 'appointments' collection
+ */
+export async function getAppointmentsByUser(userEmail: string): Promise<Appointment[]> {
+  if (!userEmail) return [];
+  const cleanEmail = userEmail.trim().toLowerCase();
+  try {
+    const q = query(
+      collection(db, 'appointments'),
+      where('userEmail', '==', cleanEmail)
+    );
+    const snapshot = await getDocs(q);
+    const list: Appointment[] = [];
+    snapshot.forEach(docSnap => {
+      list.push(docSnap.data() as Appointment);
+    });
+    return list;
+  } catch (err) {
+    console.warn('[DB Error getAppointmentsByUser]:', err);
+    return [];
+  }
+}
+
+export async function saveAppointment(appointment: Appointment, userEmail: string): Promise<void> {
+  if (!appointment.id || !userEmail) return;
+  const cleanEmail = userEmail.trim().toLowerCase();
+  try {
+    const docRef = doc(db, 'appointments', appointment.id);
+    const cleanData = sanitizeForFirestore({
+      ...appointment,
+      userEmail: cleanEmail,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(docRef, cleanData, { merge: true });
+  } catch (err) {
+    console.error('[DB Error saveAppointment]:', err);
+  }
+}
+
+export async function deleteAppointmentFromDb(appointmentId: string): Promise<void> {
+  if (!appointmentId) return;
+  try {
+    await deleteDoc(doc(db, 'appointments', appointmentId));
+  } catch (err) {
+    console.error('[DB Error deleteAppointment]:', err);
+  }
+}
+
+/**
+ * FINANCIAL TRANSACTIONS SERVICE
+ * Maps to 'transactions' collection
+ */
+export async function getTransactionsByUser(userEmail: string): Promise<FinancialTransaction[]> {
+  if (!userEmail) return [];
+  const cleanEmail = userEmail.trim().toLowerCase();
+  try {
+    const q = query(
+      collection(db, 'transactions'),
+      where('userEmail', '==', cleanEmail)
+    );
+    const snapshot = await getDocs(q);
+    const list: FinancialTransaction[] = [];
+    snapshot.forEach(docSnap => {
+      list.push(docSnap.data() as FinancialTransaction);
+    });
+    return list;
+  } catch (err) {
+    console.warn('[DB Error getTransactionsByUser]:', err);
+    return [];
+  }
+}
+
+export async function saveTransaction(transaction: FinancialTransaction, userEmail: string): Promise<void> {
+  if (!transaction.id || !userEmail) return;
+  const cleanEmail = userEmail.trim().toLowerCase();
+  try {
+    const docRef = doc(db, 'transactions', transaction.id);
+    const cleanData = sanitizeForFirestore({
+      ...transaction,
+      userEmail: cleanEmail,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(docRef, cleanData, { merge: true });
+  } catch (err) {
+    console.error('[DB Error saveTransaction]:', err);
+  }
+}
+
+/**
+ * DIETS & CALCULATION HISTORY SERVICE
+ * Maps to 'diets_and_calc' collection
+ */
+export interface DietAndCalcRecord {
+  id: string;
+  userEmail: string;
+  patientId?: string;
+  patientName?: string;
+  type: 'tmb_get' | 'pollock' | 'meal_plan' | 'protocol';
+  data: any;
+  createdAt: string;
+}
+
+export async function saveDietOrCalc(record: DietAndCalcRecord): Promise<void> {
+  if (!record.id || !record.userEmail) return;
+  try {
+    const docRef = doc(db, 'diets_and_calc', record.id);
+    const cleanData = sanitizeForFirestore({
+      ...record,
+      updatedAt: new Date().toISOString()
+    });
+    await setDoc(docRef, cleanData, { merge: true });
+  } catch (err) {
+    console.error('[DB Error saveDietOrCalc]:', err);
+  }
+}
+
+export async function getDietAndCalcHistory(userEmail: string): Promise<DietAndCalcRecord[]> {
+  if (!userEmail) return [];
+  const cleanEmail = userEmail.trim().toLowerCase();
+  try {
+    const q = query(
+      collection(db, 'diets_and_calc'),
+      where('userEmail', '==', cleanEmail)
+    );
+    const snapshot = await getDocs(q);
+    const list: DietAndCalcRecord[] = [];
+    snapshot.forEach(docSnap => {
+      list.push(docSnap.data() as DietAndCalcRecord);
+    });
+    return list;
+  } catch (err) {
+    console.warn('[DB Error getDietAndCalcHistory]:', err);
+    return [];
+  }
+}
+
+/**
+ * NUTRIA SESSIONS & CHAT HISTORY SERVICE
+ * Maps to 'nutria_sessions' collection
+ */
+export async function saveNutriaSession(userEmail: string, messages: NutriaMessage[]): Promise<void> {
+  if (!userEmail || !messages) return;
+  const cleanEmail = userEmail.trim().toLowerCase();
+  try {
+    const docRef = doc(db, 'nutria_sessions', cleanEmail);
+    const cleanMessages = messages.slice(-50).map(m => sanitizeForFirestore(m));
+    const cleanPayload = sanitizeForFirestore({
+      userEmail: cleanEmail,
+      messages: cleanMessages,
+      lastUpdated: new Date().toISOString()
+    });
+    await setDoc(docRef, cleanPayload, { merge: true });
+  } catch (err) {
+    console.error('[DB Error saveNutriaSession]:', err);
+  }
+}
+
+export async function getNutriaSession(userEmail: string): Promise<NutriaMessage[] | null> {
+  if (!userEmail) return null;
+  const cleanEmail = userEmail.trim().toLowerCase();
+  try {
+    const docRef = doc(db, 'nutria_sessions', cleanEmail);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      return (data.messages as NutriaMessage[]) || null;
+    }
+  } catch (err) {
+    console.warn('[DB Error getNutriaSession]:', err);
+  }
+  return null;
+}
+
+// Aliases & Generic Helpers
+export const getPatients = async (userEmail?: string): Promise<Patient[]> => {
+  if (userEmail) return getPatientsByUser(userEmail);
+  try {
+    const snap = await getDocs(collection(db, 'patients'));
+    const list: Patient[] = [];
+    snap.forEach(d => list.push(d.data() as Patient));
+    return list;
+  } catch {
+    return [];
+  }
+};
+
+export const savePatientToDb = async (patient: Patient, userEmail?: string): Promise<void> => {
+  return savePatient(patient, userEmail || patient.email || 'consultorio@nutrink.com.br');
+};
+
+export const getAppointments = async (userEmail?: string): Promise<Appointment[]> => {
+  if (userEmail) return getAppointmentsByUser(userEmail);
+  try {
+    const snap = await getDocs(collection(db, 'appointments'));
+    const list: Appointment[] = [];
+    snap.forEach(d => list.push(d.data() as Appointment));
+    return list;
+  } catch {
+    return [];
+  }
+};
+
+export const saveAppointmentToDb = async (appointment: Appointment, userEmail?: string): Promise<void> => {
+  return saveAppointment(appointment, userEmail || 'consultorio@nutrink.com.br');
+};
+
+export const getTransactions = async (userEmail?: string): Promise<FinancialTransaction[]> => {
+  if (userEmail) return getTransactionsByUser(userEmail);
+  try {
+    const snap = await getDocs(collection(db, 'transactions'));
+    const list: FinancialTransaction[] = [];
+    snap.forEach(d => list.push(d.data() as FinancialTransaction));
+    return list;
+  } catch {
+    return [];
+  }
+};
+
+export const saveTransactionToDb = async (transaction: FinancialTransaction, userEmail?: string): Promise<void> => {
+  return saveTransaction(transaction, userEmail || 'consultorio@nutrink.com.br');
+};
+
+export const getNutriaMessages = async (userEmail: string): Promise<NutriaMessage[] | null> => {
+  return getNutriaSession(userEmail);
+};
+
+export const saveNutriaMessage = async (userEmail: string, message: NutriaMessage): Promise<void> => {
+  const current = await getNutriaSession(userEmail) || [];
+  return saveNutriaSession(userEmail, [...current, message]);
+};
+
+/**
+ * Real-time Firebase Firestore Subscription for Appointments
+ */
+export function subscribeToAppointments(
+  callback: (appointments: Appointment[]) => void,
+  userEmail?: string
+): () => void {
+  try {
+    const q = userEmail
+      ? query(collection(db, 'appointments'), where('userEmail', '==', userEmail.trim().toLowerCase()))
+      : collection(db, 'appointments');
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const list: Appointment[] = [];
+        snapshot.forEach((docSnap) => {
+          list.push(docSnap.data() as Appointment);
+        });
+        callback(list);
+      },
+      (error) => {
+        console.warn('[Firestore onSnapshot Appointments warning]:', error);
+      }
+    );
+  } catch (err) {
+    console.warn('[Firestore subscribeToAppointments error]:', err);
+    return () => {};
+  }
+}
+
+/**
+ * Real-time Firebase Firestore Subscription for Financial Transactions
+ */
+export function subscribeToTransactions(
+  callback: (transactions: FinancialTransaction[]) => void,
+  userEmail?: string
+): () => void {
+  try {
+    const q = userEmail
+      ? query(collection(db, 'transactions'), where('userEmail', '==', userEmail.trim().toLowerCase()))
+      : collection(db, 'transactions');
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const list: FinancialTransaction[] = [];
+        snapshot.forEach((docSnap) => {
+          list.push(docSnap.data() as FinancialTransaction);
+        });
+        callback(list);
+      },
+      (error) => {
+        console.warn('[Firestore onSnapshot Transactions warning]:', error);
+      }
+    );
+  } catch (err) {
+    console.warn('[Firestore subscribeToTransactions error]:', err);
+    return () => {};
+  }
+}
+
+/**
+ * Real-time Firebase Firestore Subscription for Patients
+ */
+export function subscribeToPatients(
+  callback: (patients: Patient[]) => void,
+  userEmail?: string
+): () => void {
+  try {
+    const q = userEmail
+      ? query(collection(db, 'patients'), where('userEmail', '==', userEmail.trim().toLowerCase()))
+      : collection(db, 'patients');
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const list: Patient[] = [];
+        snapshot.forEach((docSnap) => {
+          list.push(docSnap.data() as Patient);
+        });
+        callback(list);
+      },
+      (error) => {
+        console.warn('[Firestore onSnapshot Patients warning]:', error);
+      }
+    );
+  } catch (err) {
+    console.warn('[Firestore subscribeToPatients error]:', err);
+    return () => {};
+  }
+}
+
+/**
+ * INVENTORY & STOCK SERVICE
+ * Maps to 'inventory' collection with fallback to local seed
+ */
+export async function getInventoryItems(userEmail?: string): Promise<InventoryItem[]> {
+  const cleanEmail = (userEmail || '').trim().toLowerCase();
+  
+  const isMockId = (id: string) => 
+    id.startsWith('inv-mock-') || 
+    ['inv-b12', 'inv-creapure', 'inv-omega3', 'inv-berberina', 'inv-bio-eletrodo', 'inv-fita', 'inv-whey', 'inv-coq10', 'inv-d3', 'inv-bcomplex', 'inv-gel', 'inv-adipo'].includes(id);
+
+  // First check localStorage for fast offline access
+  if (cleanEmail) {
+    try {
+      const local = localStorage.getItem(`nutrink_inventory_${cleanEmail}`);
+      if (local) {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed)) {
+          const clean = parsed.filter(i => i && i.id && !isMockId(i.id));
+          return clean;
+        }
+      }
+    } catch {}
+  } else {
+    try {
+      const guestLocal = localStorage.getItem('nutrink_inventory_guest');
+      if (guestLocal) {
+        const parsed = JSON.parse(guestLocal);
+        if (Array.isArray(parsed)) {
+          const clean = parsed.filter(i => i && i.id && !isMockId(i.id));
+          return clean;
+        }
+      }
+    } catch {}
+  }
+
+  // If connected to Firestore and email provided, fetch from database
+  if (cleanEmail) {
+    try {
+      const q = query(
+        collection(db, 'inventory'),
+        where('userEmail', '==', cleanEmail)
+      );
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        const list: InventoryItem[] = [];
+        snapshot.forEach(docSnap => {
+          const data = docSnap.data() as InventoryItem;
+          if (data && data.id && !isMockId(data.id)) {
+            list.push(data);
+          }
+        });
+        // Cache to localStorage
+        try {
+          localStorage.setItem(`nutrink_inventory_${cleanEmail}`, JSON.stringify(list));
+        } catch {}
+        return list;
+      }
+    } catch (err) {
+      console.warn('[DB Error getInventoryItems]:', err);
+    }
+  }
+
+  // Strictly empty in production
+  return [];
+}
+
+export async function saveInventoryItem(item: InventoryItem, userEmail?: string): Promise<void> {
+  if (!item.id) return;
+  const cleanEmail = (userEmail || '').trim().toLowerCase();
+
+  // Save to localStorage
+  const storageKey = cleanEmail ? `nutrink_inventory_${cleanEmail}` : 'nutrink_inventory_guest';
+  try {
+    const raw = localStorage.getItem(storageKey);
+    const list: InventoryItem[] = raw ? JSON.parse(raw) : [...INITIAL_INVENTORY_ITEMS];
+    const idx = list.findIndex(i => i.id === item.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...item, updatedAt: new Date().toISOString() };
+    } else {
+      list.unshift({ ...item, createdAt: item.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() });
+    }
+    localStorage.setItem(storageKey, JSON.stringify(list));
+  } catch (err) {
+    console.warn('[LocalStorage saveInventoryItem warn]:', err);
+  }
+
+  // Save to Firestore
+  if (cleanEmail) {
+    try {
+      const docRef = doc(db, 'inventory', item.id);
+      const cleanData = sanitizeForFirestore({
+        ...item,
+        userEmail: cleanEmail,
+        updatedAt: new Date().toISOString()
+      });
+      await setDoc(docRef, cleanData, { merge: true });
+    } catch (err) {
+      console.error('[DB Error saveInventoryItem]:', err);
+    }
+  }
+}
+
+export async function deleteInventoryItemFromDb(itemId: string, userEmail?: string): Promise<void> {
+  if (!itemId) return;
+  const cleanEmail = (userEmail || '').trim().toLowerCase();
+
+  // Remove from localStorage
+  const storageKey = cleanEmail ? `nutrink_inventory_${cleanEmail}` : 'nutrink_inventory_guest';
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (raw) {
+      const list: InventoryItem[] = JSON.parse(raw);
+      const filtered = list.filter(i => i.id !== itemId);
+      localStorage.setItem(storageKey, JSON.stringify(filtered));
+    }
+  } catch (err) {}
+
+  // Remove from Firestore
+  if (cleanEmail) {
+    try {
+      const docRef = doc(db, 'inventory', itemId);
+      await deleteDoc(docRef);
+    } catch (err) {
+      console.error('[DB Error deleteInventoryItem]:', err);
+    }
+  }
+}
+
+export function subscribeToInventory(
+  callback: (items: InventoryItem[]) => void,
+  userEmail?: string
+): () => void {
+  try {
+    const isMockId = (id: string) => 
+      id?.startsWith('inv-mock-') || 
+      ['inv-b12', 'inv-creapure', 'inv-omega3', 'inv-berberina', 'inv-bio-eletrodo', 'inv-fita', 'inv-whey', 'inv-coq10', 'inv-d3', 'inv-bcomplex', 'inv-gel', 'inv-adipo'].includes(id);
+
+    const q = userEmail
+      ? query(collection(db, 'inventory'), where('userEmail', '==', userEmail.trim().toLowerCase()))
+      : collection(db, 'inventory');
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const list: InventoryItem[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as InventoryItem;
+            if (data && data.id && !isMockId(data.id)) {
+              list.push(data);
+            }
+          });
+          callback(list);
+        } else {
+          callback([]);
+        }
+      },
+      (error) => {
+        console.warn('[Firestore onSnapshot Inventory warning]:', error);
+      }
+    );
+  } catch (err) {
+    console.warn('[Firestore subscribeToInventory error]:', err);
+    return () => {};
+  }
+}
+

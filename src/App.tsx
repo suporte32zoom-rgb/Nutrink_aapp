@@ -1,0 +1,2027 @@
+import React, { useState, useEffect, Suspense, lazy } from 'react';
+import { Routes, Route, useNavigate, useLocation, useParams, Navigate } from 'react-router-dom';
+import confetti from 'canvas-confetti';
+import { Header } from './components/Header';
+import { Navigation } from './components/Navigation';
+import { NewPatientModal } from './components/NewPatientModal';
+import { NewAppointmentModal } from './components/NewAppointmentModal';
+import { AppointmentDetailsModal } from './components/AppointmentDetailsModal';
+import { NewTransactionModal } from './components/NewTransactionModal';
+import { UserProfileModal } from './components/UserProfileModal';
+import { Footer } from './components/Footer';
+import { LoginModal } from './components/LoginModal';
+import { BottomNavigation } from './components/BottomNavigation';
+
+// Code Splitting (React.lazy) para otimização PageSpeed (carregamento sob demanda)
+const DashboardView = lazy(() => import('./components/DashboardView').then(m => ({ default: m.default || m.DashboardView })));
+const PatientsView = lazy(() => import('./components/PatientsView').then(m => ({ default: m.default || m.PatientsView })));
+const CalendarView = lazy(() => import('./components/CalendarView').then(m => ({ default: m.default || m.CalendarView })));
+const FinanceView = lazy(() => import('./components/FinanceView').then(m => ({ default: m.default || m.FinanceView })));
+const NutriCalcView = lazy(() => import('./components/NutriCalcView').then(m => ({ default: m.default || m.NutriCalcView })));
+const NutriaCopilot = lazy(() => import('./components/NutriaCopilot').then(m => ({ default: m.default || m.NutriaCopilot })));
+const MealPlansGlobalView = lazy(() => import('./components/MealPlansGlobalView').then(m => ({ default: m.default || m.MealPlansGlobalView })));
+const ExamsGlobalView = lazy(() => import('./components/ExamsGlobalView').then(m => ({ default: m.default || m.ExamsGlobalView })));
+const PrescriptionsGlobalView = lazy(() => import('./components/PrescriptionsGlobalView').then(m => ({ default: m.default || m.PrescriptionsGlobalView })));
+const InventoryView = lazy(() => import('./components/InventoryView').then(m => ({ default: m.default || m.InventoryView })));
+const SettingsGlobalView = lazy(() => import('./components/SettingsGlobalView').then(m => ({ default: m.default || m.SettingsGlobalView })));
+const InstitutionalPageView = lazy(() => import('./components/InstitutionalPageView').then(m => ({ default: m.default || m.InstitutionalPageView })));
+const TelemedicineView = lazy(() => import('./components/TelemedicineView').then(m => ({ default: m.default || m.TelemedicineView })));
+const MercadoPagoSubscriptionsView = lazy(() => import('./components/MercadoPagoSubscriptionsView').then(m => ({ default: m.default || m.MercadoPagoSubscriptionsView })));
+const OnboardingView = lazy(() => import('./components/OnboardingView').then(m => ({ default: m.default || m.OnboardingView })));
+const SubscriptionModal = lazy(() => import('./components/SubscriptionModal').then(m => ({ default: m.default || m.SubscriptionModal })));
+const InstitutionalDocModal = lazy(() => import('./components/InstitutionalDocModal').then(m => ({ default: m.default || m.InstitutionalDocModal })));
+
+// Componente elegante de fallback de carregamento de rotas (Dark Mode)
+const RouteLoadingFallback = () => (
+  <div className="flex flex-col items-center justify-center min-h-[45vh] py-16 text-center animate-fadeIn">
+    <div className="w-10 h-10 border-2 border-fuchsia-500/20 border-t-fuchsia-400 rounded-full animate-spin mb-3"></div>
+    <span className="text-xs font-semibold text-purple-300/80 tracking-wide">Carregando módulo NutrinK...</span>
+  </div>
+);
+import { 
+  INITIAL_PATIENTS, 
+  INITIAL_APPOINTMENTS, 
+  INITIAL_TRANSACTIONS, 
+  INITIAL_FOOD_DATABASE,
+  INITIAL_INVENTORY 
+} from './data/initialData';
+import { 
+  Patient, 
+  Appointment, 
+  FinancialTransaction, 
+  NutriaMessage, 
+  NutriaActionExecution,
+  UserAccount,
+  SubscriptionPlan,
+  InventoryItem,
+  StockMovement
+} from './types';
+import { safeFetchJson } from './utils/api';
+import { callNutriaDirect } from './services/nutriaGeminiDirect';
+import { getDailyNutriaUsage, incrementDailyNutriaUsage } from './utils/nutriaQuotaManager';
+import { getNutriaGreeting } from './utils/nutriaGreeting';
+import { NutriaAvatar } from './components/NutriaAvatar';
+import { Bot, Sparkles, MessageSquare, X } from 'lucide-react';
+import { 
+  getPatients, 
+  savePatientToDb, 
+  deletePatientFromDb,
+  getAppointments,
+  saveAppointmentToDb,
+  deleteAppointmentFromDb,
+  getTransactions,
+  saveTransactionToDb,
+  getProfileByEmail,
+  saveProfile,
+  getNutriaMessages,
+  saveNutriaMessage,
+  subscribeToAppointments,
+  subscribeToTransactions,
+  subscribeToPatients,
+  getInventoryItems,
+  saveInventoryItem,
+  deleteInventoryItemFromDb,
+  subscribeToInventory
+} from './services/databaseService';
+import { trackPageView, trackAppointmentEvent, trackEvent } from './services/analytics';
+
+// Subwrapper component for /pacientes/:id route
+function PatientDetailRouteWrapper({
+  patients,
+  onOpenNewPatient,
+  onOpenNewAppointmentWithPatient,
+  onOpenNutriaWithPrompt,
+  onUpdatePatient,
+  onDeletePatient,
+  foodDatabase,
+  userAccount,
+  onStartTelemedicine,
+  onNavigateToNutriCalc,
+  appointments,
+  onUpdateAppointmentStatus,
+  onOpenAppointmentDetails
+}: any) {
+  const { id } = useParams<{ id?: string }>();
+  const navigate = useNavigate();
+
+  return (
+    <PatientsView
+      patients={patients}
+      selectedPatientId={id || null}
+      onSelectPatient={(selectedId) => {
+        if (selectedId) {
+          navigate(`/pacientes/${selectedId}`);
+        } else {
+          navigate('/pacientes');
+        }
+      }}
+      onOpenNewPatient={onOpenNewPatient}
+      onOpenNewAppointmentWithPatient={onOpenNewAppointmentWithPatient}
+      onOpenNutriaWithPrompt={onOpenNutriaWithPrompt}
+      onUpdatePatient={onUpdatePatient}
+      onDeletePatient={onDeletePatient}
+      foodDatabase={foodDatabase}
+      userAccount={userAccount}
+      onStartTelemedicine={onStartTelemedicine}
+      onNavigateToNutriCalc={onNavigateToNutriCalc}
+      appointments={appointments}
+      onUpdateAppointmentStatus={onUpdateAppointmentStatus}
+      onOpenAppointmentDetails={onOpenAppointmentDetails}
+    />
+  );
+}
+
+// Subwrapper component for /telemedicina/:roomName route
+function TelemedicineRouteWrapper(props: any) {
+  const { roomName } = useParams<{ roomName?: string }>();
+  return <TelemedicineView {...props} initialRoomName={roomName || props.initialRoomName} />;
+}
+
+// Subwrapper component for /docs/:pageId route
+function InstitutionalDocRouteWrapper(props: any) {
+  const { pageId } = useParams<{ pageId?: string }>();
+  return <InstitutionalPageView {...props} pageId={pageId || 'sobre'} />;
+}
+
+export function App() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Check URL parameters for direct deep-linking (e.g. /telemedicina?room=xyz, ?tab=telemedicine)
+  const [telemedRoomFromUrl, setTelemedRoomFromUrl] = useState<string | null>(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get('room') || urlParams.get('r') || urlParams.get('sala') || null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [telemedPatientFromUrl, setTelemedPatientFromUrl] = useState<string | null>(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get('patient') || urlParams.get('paciente') || urlParams.get('name') || null;
+    } catch {
+      return null;
+    }
+  });
+
+  // User Account & Session Management (restores active session or registered profile)
+  const [userAccount, setUserAccount] = useState<UserAccount | null>(() => {
+    try {
+      const saved = localStorage.getItem('nutrink_user_session');
+      if (saved) {
+        const parsed: UserAccount = JSON.parse(saved);
+        return parsed;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('nutrink_user_session');
+      return !!saved;
+    } catch {
+      return false;
+    }
+  });
+
+  // Application Data States - Strictly isolated per user email with pre-registered example patient for free exploration
+  const [patients, setPatients] = useState<Patient[]>(() => {
+    try {
+      const savedUser = localStorage.getItem('nutrink_user_session');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        const email = parsed?.email?.trim().toLowerCase();
+        if (email) {
+          const saved = localStorage.getItem(`nutrink_patients_${email}`);
+          if (saved) {
+            const parsedList = JSON.parse(saved);
+            if (Array.isArray(parsedList) && parsedList.length > 0) {
+              return parsedList;
+            }
+          }
+        }
+      }
+      return INITIAL_PATIENTS;
+    } catch {
+      return INITIAL_PATIENTS;
+    }
+  });
+
+  const [appointments, setAppointments] = useState<Appointment[]>(() => {
+    try {
+      const savedUser = localStorage.getItem('nutrink_user_session');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        const email = parsed?.email?.trim().toLowerCase();
+        if (email) {
+          const saved = localStorage.getItem(`nutrink_appointments_${email}`);
+          return saved ? JSON.parse(saved) : [];
+        }
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [transactions, setTransactions] = useState<FinancialTransaction[]>(() => {
+    try {
+      const savedUser = localStorage.getItem('nutrink_user_session');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        const email = parsed?.email?.trim().toLowerCase();
+        if (email) {
+          const saved = localStorage.getItem(`nutrink_transactions_${email}`);
+          return saved ? JSON.parse(saved) : [];
+        }
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [inventory, setInventory] = useState<InventoryItem[]>(() => {
+    try {
+      const savedUser = localStorage.getItem('nutrink_user_session');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        const email = parsed?.email?.trim().toLowerCase();
+        if (email) {
+          const saved = localStorage.getItem(`nutrink_inventory_${email}`);
+          if (saved) {
+            const parsedInv = JSON.parse(saved);
+            if (Array.isArray(parsedInv) && parsedInv.length > 0) {
+              return parsedInv;
+            }
+          }
+        }
+      }
+      return INITIAL_INVENTORY;
+    } catch {
+      return INITIAL_INVENTORY;
+    }
+  });
+
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+
+  // Track page views in Google Analytics whenever the active URL changes
+  useEffect(() => {
+    const path = location.pathname;
+    trackPageView(`NutrinK - ${path}`, path);
+  }, [location.pathname]);
+
+  // Sync state changes with email-scoped localStorage
+  useEffect(() => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    if (email) {
+      try {
+        localStorage.setItem(`nutrink_patients_${email}`, JSON.stringify(patients));
+      } catch (e) {
+        console.error('Error saving patients:', e);
+      }
+    }
+  }, [patients, userAccount?.email]);
+
+  useEffect(() => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    if (email) {
+      try {
+        localStorage.setItem(`nutrink_appointments_${email}`, JSON.stringify(appointments));
+      } catch (e) {
+        console.error('Error saving appointments:', e);
+      }
+    }
+  }, [appointments, userAccount?.email]);
+
+  useEffect(() => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    if (email) {
+      try {
+        localStorage.setItem(`nutrink_transactions_${email}`, JSON.stringify(transactions));
+      } catch (e) {
+        console.error('Error saving transactions:', e);
+      }
+    }
+  }, [transactions, userAccount?.email]);
+
+  useEffect(() => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    if (email) {
+      try {
+        localStorage.setItem(`nutrink_inventory_${email}`, JSON.stringify(inventory));
+      } catch (e) {
+        console.error('Error saving inventory:', e);
+      }
+    }
+  }, [inventory, userAccount?.email]);
+
+  // Modal UI States
+  const [isNewPatientOpen, setIsNewPatientOpen] = useState(false);
+  const [isNewAppointmentOpen, setIsNewAppointmentOpen] = useState(false);
+  const [isAppointmentDetailsOpen, setIsAppointmentDetailsOpen] = useState(false);
+  const [selectedAppointmentForDetails, setSelectedAppointmentForDetails] = useState<Appointment | null>(null);
+  const [isNewTransactionOpen, setIsNewTransactionOpen] = useState(false);
+  const [isSubscriptionModalOpen, setIsSubscriptionModalOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isInstitutionalModalOpen, setIsInstitutionalModalOpen] = useState(false);
+  const [activeInstitutionalPageId, setActiveInstitutionalPageId] = useState<string>('sobre');
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isFloatingChatOpen, setIsFloatingChatOpen] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState('');
+
+  const [authModalTab, setAuthModalTab] = useState<'login' | 'register' | 'forgot_password'>(() => {
+    try {
+      const registeredUsersRaw = localStorage.getItem('nutrink_registered_users');
+      const hasRegisteredUsers = registeredUsersRaw && JSON.parse(registeredUsersRaw).length > 0;
+      const hasLastEmail = !!localStorage.getItem('nutrink_last_email');
+      return (hasRegisteredUsers || hasLastEmail) ? 'login' : 'register';
+    } catch {
+      return 'login';
+    }
+  });
+
+  const [preSelectedPatientForApt, setPreSelectedPatientForApt] = useState<Patient | null>(null);
+
+  // Fallback guest object for child components that require non-null UserAccount
+  const [guestDailyCount, setGuestDailyCount] = useState<number>(() => {
+    try {
+      return getDailyNutriaUsage(null).count;
+    } catch {
+      return 0;
+    }
+  });
+
+  const effectiveUserAccount: UserAccount = userAccount ? {
+    ...userAccount,
+    dailyMessageCount: getDailyNutriaUsage(userAccount).count
+  } : {
+    id: 'usr-unauthenticated',
+    name: 'Profissional de Saúde',
+    email: '',
+    crn: '',
+    specialty: 'Nutrição Clínica & Funcional',
+    plan: 'free',
+    isSubscribed: false,
+    dailyMessageCount: getDailyNutriaUsage(null).count,
+    dailyMessageLimit: 30,
+    monthlyMessageCount: getDailyNutriaUsage(null).count,
+    monthlyMessageLimit: 50,
+    activeSince: '2026'
+  };
+
+  const handleOpenInstitutionalPage = (pageId: string) => {
+    navigate(`/${pageId}`);
+  };
+
+  const handleOpenLoginModal = (tab: 'login' | 'register' | 'forgot_password' = 'login') => {
+    setAuthModalTab(tab);
+    setIsLoginModalOpen(true);
+  };
+
+  const handleLoginAs = (updated: Partial<UserAccount>) => {
+    const cleanEmail = (updated.email || '').trim().toLowerCase();
+    const newUser: UserAccount = {
+      id: updated.id || `usr-${Date.now()}`,
+      name: updated.name || 'Profissional de Saúde',
+      email: cleanEmail,
+      crn: updated.crn || 'CRN Ativo',
+      specialty: updated.specialty || 'Nutrição Clínica & Funcional',
+      plan: updated.plan || 'free',
+      isSubscribed: updated.isSubscribed || false,
+      dailyMessageCount: updated.dailyMessageCount || 0,
+      dailyMessageLimit: updated.dailyMessageLimit || 30,
+      monthlyMessageCount: updated.monthlyMessageCount || 0,
+      monthlyMessageLimit: updated.monthlyMessageLimit || 50,
+      activeSince: updated.activeSince || '2026',
+      avatarUrl: updated.avatarUrl,
+      authProvider: updated.authProvider || 'google',
+      googleId: updated.googleId
+    };
+
+    try {
+      localStorage.setItem('nutrink_user_session', JSON.stringify(newUser));
+      if (cleanEmail) {
+        localStorage.setItem('nutrink_last_email', cleanEmail);
+      }
+    } catch (e) {
+      console.error('Failed to save session:', e);
+    }
+
+    // Load account-specific cache or start clean (zerado) for this profile
+    if (cleanEmail) {
+      try {
+        const savedPatients = localStorage.getItem(`nutrink_patients_${cleanEmail}`);
+        setPatients(savedPatients ? JSON.parse(savedPatients) : []);
+
+        const savedApts = localStorage.getItem(`nutrink_appointments_${cleanEmail}`);
+        setAppointments(savedApts ? JSON.parse(savedApts) : []);
+
+        const savedTx = localStorage.getItem(`nutrink_transactions_${cleanEmail}`);
+        setTransactions(savedTx ? JSON.parse(savedTx) : []);
+
+        const savedNutria = localStorage.getItem(`nutrink_nutria_conversation_history_${cleanEmail}`);
+        setNutriaMessages(savedNutria ? JSON.parse(savedNutria) : [DEFAULT_NUTRIA_WELCOME]);
+
+        const savedInv = localStorage.getItem(`nutrink_inventory_${cleanEmail}`);
+        if (savedInv) {
+          const parsed = JSON.parse(savedInv);
+          const clean = Array.isArray(parsed) ? parsed.filter((i: any) => i && i.id && !i.id.startsWith('inv-mock-') && !['inv-b12', 'inv-creapure', 'inv-omega3', 'inv-berberina', 'inv-bio-eletrodo', 'inv-fita', 'inv-whey', 'inv-coq10', 'inv-d3', 'inv-bcomplex', 'inv-gel', 'inv-adipo'].includes(i.id)) : [];
+          setInventory(clean);
+        } else {
+          setInventory([]);
+        }
+      } catch {
+        setPatients([]);
+        setAppointments([]);
+        setTransactions([]);
+        setInventory([]);
+        setNutriaMessages([DEFAULT_NUTRIA_WELCOME]);
+      }
+    } else {
+      setPatients([]);
+      setAppointments([]);
+      setTransactions([]);
+      setInventory([]);
+      setNutriaMessages([DEFAULT_NUTRIA_WELCOME]);
+    }
+
+    setUserAccount(newUser);
+    setIsAuthenticated(true);
+    setIsLoginModalOpen(false);
+    setSelectedPatientId(null);
+    navigate('/dashboard');
+
+    if (cleanEmail) {
+      saveProfile(newUser).catch(err => console.warn('Erro ao salvar perfil no banco:', err));
+    }
+  };
+
+  const handleLogout = () => {
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch (e) {
+      console.error('Failed to clear storage on logout:', e);
+    }
+    setUserAccount(null);
+    setIsAuthenticated(false);
+    setPatients([]);
+    setAppointments([]);
+    setTransactions([]);
+    setInventory([]);
+    setSelectedPatientId(null);
+    setNutriaMessages([DEFAULT_NUTRIA_WELCOME]);
+    setIsProfileModalOpen(false);
+    setIsLoginModalOpen(false);
+    setIsSubscriptionModalOpen(false);
+    setIsNewPatientOpen(false);
+    setIsNewAppointmentOpen(false);
+    setIsNewTransactionOpen(false);
+    setIsAppointmentDetailsOpen(false);
+    setSelectedAppointmentForDetails(null);
+    setGlobalSearch('');
+    navigate('/dashboard');
+  };
+
+  // Real-time backend subscription sync (via Mercado Pago Webhook)
+  useEffect(() => {
+    if (!userAccount?.email) return;
+
+    let isMounted = true;
+
+    const checkBackendSubscription = async () => {
+      try {
+        const email = encodeURIComponent(userAccount.email.trim().toLowerCase());
+        const res = await safeFetchJson<{ hasActiveSubscription: boolean; planId: any }>(
+          `/api/payments/user-subscription/${email}`,
+          { silent: true }
+        );
+        if (!isMounted) return;
+        if (res.ok && res.data) {
+          const data = res.data;
+          if (data.hasActiveSubscription && (!userAccount.isSubscribed || userAccount.plan !== data.planId)) {
+            const upgradedUser: UserAccount = {
+              ...userAccount,
+              plan: data.planId,
+              isSubscribed: true,
+              dailyMessageLimit: 99999,
+              monthlyMessageLimit: 99999
+            };
+            setUserAccount(upgradedUser);
+            try {
+              localStorage.setItem('nutrink_user_session', JSON.stringify(upgradedUser));
+
+              const registeredRaw = localStorage.getItem('nutrink_registered_users');
+              if (registeredRaw) {
+                const regList = JSON.parse(registeredRaw);
+                const updatedList = regList.map((u: any) => 
+                  u.email?.toLowerCase() === userAccount.email.toLowerCase()
+                    ? { ...u, plan: data.planId, isSubscribed: true }
+                    : u
+                );
+                localStorage.setItem('nutrink_registered_users', JSON.stringify(updatedList));
+              }
+            } catch (storageErr) {
+              console.warn('[NutrinK LocalStorage Warn]', storageErr);
+            }
+          }
+        }
+      } catch {
+        // silent fallback
+      }
+    };
+
+    checkBackendSubscription();
+    const subSyncInterval = setInterval(checkBackendSubscription, 20000);
+    return () => {
+      isMounted = false;
+      clearInterval(subSyncInterval);
+    };
+  }, [userAccount?.email, userAccount?.plan, userAccount?.isSubscribed]);
+
+  // NUTRIA Copilot Conversation History State
+  const defaultNutriaWelcomeText = getNutriaGreeting(userAccount);
+  const DEFAULT_NUTRIA_WELCOME: NutriaMessage = {
+    id: 'msg-init-1',
+    role: 'assistant',
+    content: defaultNutriaWelcomeText,
+    timestamp: 'Agora'
+  };
+
+  const [nutriaMessages, setNutriaMessages] = useState<NutriaMessage[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const savedUser = localStorage.getItem('nutrink_user_session');
+        if (savedUser) {
+          const parsed = JSON.parse(savedUser);
+          const email = parsed?.email?.trim().toLowerCase();
+          if (email) {
+            const saved = localStorage.getItem(`nutrink_nutria_conversation_history_${email}`);
+            if (saved) {
+              const parsedHistory = JSON.parse(saved);
+              if (Array.isArray(parsedHistory) && parsedHistory.length > 0) {
+                if (parsedHistory.length === 1 && parsedHistory[0]?.role === 'assistant') {
+                  return [{
+                    ...parsedHistory[0],
+                    content: getNutriaGreeting(parsed)
+                  }];
+                }
+                return parsedHistory;
+              }
+            }
+          }
+        } else {
+          const guestSaved = localStorage.getItem('nutrink_guest_nutria_conversation');
+          if (guestSaved) {
+            const parsedGuestHistory = JSON.parse(guestSaved);
+            if (Array.isArray(parsedGuestHistory) && parsedGuestHistory.length > 0) {
+              return parsedGuestHistory;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao restaurar histórico de conversas da NUTRIA:', err);
+      }
+    }
+    return [DEFAULT_NUTRIA_WELCOME];
+  });
+
+  // Atualiza saudação inicial automaticamente apenas se houver apenas a mensagem de boas-vindas inicial
+  useEffect(() => {
+    const greeting = getNutriaGreeting(userAccount);
+    setNutriaMessages(prev => {
+      if (!prev || prev.length === 0) {
+        return [{
+          id: 'msg-init-1',
+          role: 'assistant',
+          content: greeting,
+          timestamp: 'Agora'
+        }];
+      }
+      if (prev.length === 1 && prev[0].role === 'assistant' && prev[0].id === 'msg-init-1') {
+        return [{
+          ...prev[0],
+          content: greeting
+        }];
+      }
+      return prev;
+    });
+  }, [userAccount?.name, userAccount?.crn]);
+
+  useEffect(() => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    if (nutriaMessages && nutriaMessages.length > 0) {
+      try {
+        if (email) {
+          localStorage.setItem(`nutrink_nutria_conversation_history_${email}`, JSON.stringify(nutriaMessages));
+        } else {
+          localStorage.setItem('nutrink_guest_nutria_conversation', JSON.stringify(nutriaMessages));
+        }
+      } catch (err) {
+        console.warn('Erro ao salvar histórico do chat:', err);
+      }
+    }
+  }, [nutriaMessages, userAccount?.email]);
+
+  const handleClearNutriaHistory = () => {
+    const freshWelcome: NutriaMessage = {
+      id: 'msg-init-1',
+      role: 'assistant',
+      content: getNutriaGreeting(userAccount),
+      timestamp: 'Agora'
+    };
+    setNutriaMessages([freshWelcome]);
+    const email = userAccount?.email?.trim().toLowerCase();
+    try {
+      if (email) {
+        localStorage.setItem(`nutrink_nutria_conversation_history_${email}`, JSON.stringify([freshWelcome]));
+      } else {
+        localStorage.setItem('nutrink_guest_nutria_conversation', JSON.stringify([freshWelcome]));
+      }
+    } catch {}
+  };
+
+  const [isNutriaLoading, setIsNutriaLoading] = useState(false);
+
+  // Initial load and real-time live sync with Cloud Database for the active user account
+  useEffect(() => {
+    const email = userAccount?.email ? userAccount.email.trim().toLowerCase() : undefined;
+
+    if (!email) {
+      return;
+    }
+
+    let isSubscribed = true;
+
+    const loadInitialCloudData = async () => {
+      try {
+        const cloudPatients = await getPatients(email);
+        if (!isSubscribed) return;
+        setPatients(cloudPatients && cloudPatients.length > 0 ? cloudPatients : INITIAL_PATIENTS);
+        try { localStorage.setItem(`nutrink_patients_${email}`, JSON.stringify(cloudPatients && cloudPatients.length > 0 ? cloudPatients : INITIAL_PATIENTS)); } catch {}
+
+        const cloudApts = await getAppointments(email);
+        if (!isSubscribed) return;
+        setAppointments(cloudApts || []);
+        try { localStorage.setItem(`nutrink_appointments_${email}`, JSON.stringify(cloudApts || [])); } catch {}
+
+        const cloudTx = await getTransactions(email);
+        if (!isSubscribed) return;
+        setTransactions(cloudTx || []);
+        try { localStorage.setItem(`nutrink_transactions_${email}`, JSON.stringify(cloudTx || [])); } catch {}
+
+        const cloudInv = await getInventoryItems(email);
+        if (!isSubscribed) return;
+        setInventory(cloudInv && cloudInv.length > 0 ? cloudInv : INITIAL_INVENTORY);
+        try { localStorage.setItem(`nutrink_inventory_${email}`, JSON.stringify(cloudInv && cloudInv.length > 0 ? cloudInv : INITIAL_INVENTORY)); } catch {}
+
+        const profile = await getProfileByEmail(email);
+        if (!isSubscribed) return;
+        if (profile) {
+          setUserAccount(prev => (prev ? { ...prev, ...profile } : profile));
+        }
+
+        const cloudMsgs = await getNutriaMessages(email);
+        if (!isSubscribed) return;
+        if (cloudMsgs && cloudMsgs.length > 0) {
+          setNutriaMessages(cloudMsgs);
+          try { localStorage.setItem(`nutrink_nutria_conversation_history_${email}`, JSON.stringify(cloudMsgs)); } catch {}
+        }
+      } catch (err) {
+        console.warn('Syncing user cloud data with cloud store...', err);
+      }
+    };
+
+    loadInitialCloudData();
+
+    const unsubApts = subscribeToAppointments((cloudApts) => {
+      if (isSubscribed) {
+        setAppointments(cloudApts || []);
+        try { localStorage.setItem(`nutrink_appointments_${email}`, JSON.stringify(cloudApts || [])); } catch {}
+      }
+    }, email);
+
+    const unsubTx = subscribeToTransactions((cloudTx) => {
+      if (isSubscribed) {
+        setTransactions(cloudTx || []);
+        try { localStorage.setItem(`nutrink_transactions_${email}`, JSON.stringify(cloudTx || [])); } catch {}
+      }
+    }, email);
+
+    const unsubPatients = subscribeToPatients((cloudPatients) => {
+      if (isSubscribed) {
+        setPatients(cloudPatients || []);
+        try { localStorage.setItem(`nutrink_patients_${email}`, JSON.stringify(cloudPatients || [])); } catch {}
+      }
+    }, email);
+
+    const unsubInv = subscribeToInventory((cloudInv) => {
+      if (isSubscribed) {
+        setInventory(cloudInv || INITIAL_INVENTORY_ITEMS);
+        try { localStorage.setItem(`nutrink_inventory_${email}`, JSON.stringify(cloudInv || INITIAL_INVENTORY_ITEMS)); } catch {}
+      }
+    }, email);
+
+    return () => {
+      isSubscribed = false;
+      unsubApts();
+      unsubTx();
+      unsubPatients();
+      unsubInv();
+    };
+  }, [userAccount?.email]);
+
+  const activePatient = patients.find(p => p.id === selectedPatientId) || null;
+
+  const paidAppointments = appointments.filter(a => 
+    a.paymentStatus === 'pago' || (a.status === 'realizada' && a.paymentStatus !== 'cancelado')
+  );
+  const appointmentsRevenue = paidAppointments.reduce((acc, curr) => acc + (Number(curr.price) || 0), 0);
+
+  const transactionsRevenue = transactions
+    .filter(t => t.type === 'receita' && t.status === 'concluido' && !paidAppointments.some(a => a.id === t.id))
+    .reduce((acc, curr) => acc + curr.amount, 0);
+
+  const totalRevenue = appointmentsRevenue + transactionsRevenue;
+
+  const totalExpenses = transactions
+    .filter(t => t.type === 'despesa' && t.status === 'concluido')
+    .reduce((acc, curr) => acc + curr.amount, 0);
+
+  const handleOpenAppointmentDetails = (apt: Appointment) => {
+    setSelectedAppointmentForDetails(apt);
+    setIsAppointmentDetailsOpen(true);
+  };
+
+  const handleSaveAppointmentDetails = async (updated: Appointment) => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    setAppointments(prev => {
+      const exists = prev.some(a => a.id === updated.id);
+      const updatedList = exists 
+        ? prev.map(a => a.id === updated.id ? updated : a)
+        : [updated, ...prev];
+      if (email) {
+        try { localStorage.setItem(`nutrink_appointments_${email}`, JSON.stringify(updatedList)); } catch {}
+      }
+      return updatedList;
+    });
+    setSelectedAppointmentForDetails(updated);
+    await saveAppointmentToDb(updated, userAccount?.email).catch(err => console.warn('Erro ao persistir agendamento no Firestore:', err));
+  };
+
+  const handleDeleteAppointment = async (appointmentId: string) => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    setAppointments(prev => {
+      const updatedList = prev.filter(a => a.id !== appointmentId);
+      if (email) {
+        try { localStorage.setItem(`nutrink_appointments_${email}`, JSON.stringify(updatedList)); } catch {}
+      }
+      return updatedList;
+    });
+    if (selectedAppointmentForDetails?.id === appointmentId) {
+      setSelectedAppointmentForDetails(null);
+      setIsAppointmentDetailsOpen(false);
+    }
+    await deleteAppointmentFromDb(appointmentId).catch(err => console.warn('Erro ao deletar agendamento do Firestore:', err));
+  };
+
+  const handleUpdateAppointmentStatus = (aptId: string, newStatus: Appointment['status']) => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    setAppointments(prev => {
+      const updated = prev.map(a => {
+        if (a.id === aptId) {
+          return {
+            ...a,
+            status: newStatus,
+            paymentStatus: newStatus === 'realizada' ? 'pago' : a.paymentStatus
+          };
+        }
+        return a;
+      });
+      const targetApt = updated.find(a => a.id === aptId);
+      if (targetApt) {
+        saveAppointmentToDb(targetApt, userAccount?.email).catch(err => console.warn('Erro ao atualizar agendamento:', err));
+      }
+      if (email) {
+        try { localStorage.setItem(`nutrink_appointments_${email}`, JSON.stringify(updated)); } catch {}
+      }
+      return updated;
+    });
+  };
+
+  const handleOpenNewAppointmentWithPatient = (patient: Patient) => {
+    setPreSelectedPatientForApt(patient);
+    setIsNewAppointmentOpen(true);
+  };
+
+  const handleUpdatePatient = (updated: Patient) => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    setPatients(prev => {
+      const updatedList = prev.map(p => p.id === updated.id ? updated : p);
+      if (email) {
+        try { localStorage.setItem(`nutrink_patients_${email}`, JSON.stringify(updatedList)); } catch {}
+      }
+      return updatedList;
+    });
+    savePatientToDb(updated, userAccount?.email).catch(err => console.warn('Erro ao salvar paciente na nuvem:', err));
+  };
+
+  const handleDeletePatient = (patientId: string) => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    setPatients(prev => {
+      const updated = prev.filter(p => p.id !== patientId);
+      if (email) {
+        try { localStorage.setItem(`nutrink_patients_${email}`, JSON.stringify(updated)); } catch {}
+      }
+      return updated;
+    });
+    setAppointments(prev => {
+      const updated = prev.filter(a => a.patientId !== patientId);
+      if (email) {
+        try { localStorage.setItem(`nutrink_appointments_${email}`, JSON.stringify(updated)); } catch {}
+      }
+      return updated;
+    });
+    deletePatientFromDb(patientId).catch(err => console.warn('Erro ao deletar paciente na nuvem:', err));
+    if (selectedPatientId === patientId) {
+      setSelectedPatientId(null);
+      navigate('/pacientes');
+    }
+  };
+
+  const handleSaveInventoryItem = async (item: InventoryItem) => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    setInventory(prev => {
+      const exists = prev.some(i => i.id === item.id);
+      const updated = exists ? prev.map(i => i.id === item.id ? item : i) : [item, ...prev];
+      if (email) {
+        try { localStorage.setItem(`nutrink_inventory_${email}`, JSON.stringify(updated)); } catch {}
+      }
+      return updated;
+    });
+    await saveInventoryItem(item, userAccount?.email).catch(err => console.warn('Erro ao salvar insumo no Firestore:', err));
+  };
+
+  const handleDeleteInventoryItem = async (itemId: string) => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    setInventory(prev => {
+      const updated = prev.filter(i => i.id !== itemId);
+      if (email) {
+        try { localStorage.setItem(`nutrink_inventory_${email}`, JSON.stringify(updated)); } catch {}
+      }
+      return updated;
+    });
+    await deleteInventoryItemFromDb(itemId).catch(err => console.warn('Erro ao deletar insumo do Firestore:', err));
+  };
+
+  const handleLogStockMovement = async (itemId: string, movement: Omit<StockMovement, 'id' | 'date'>) => {
+    const email = userAccount?.email?.trim().toLowerCase();
+    const newMovement: StockMovement = {
+      id: `mov-${Date.now()}`,
+      date: new Date().toISOString(),
+      ...movement
+    };
+
+    let targetUpdated: InventoryItem | null = null;
+
+    setInventory(prev => {
+      const updated = prev.map(item => {
+        if (item.id === itemId) {
+          const delta = movement.type === 'entrada' ? movement.quantity : -movement.quantity;
+          const newStock = Math.max(0, item.currentStock + delta);
+          const updatedHistory = [newMovement, ...(item.history || [])];
+          targetUpdated = {
+            ...item,
+            currentStock: newStock,
+            history: updatedHistory
+          };
+          return targetUpdated;
+        }
+        return item;
+      });
+
+      if (email) {
+        try { localStorage.setItem(`nutrink_inventory_${email}`, JSON.stringify(updated)); } catch {}
+      }
+      return updated;
+    });
+
+    if (targetUpdated) {
+      await saveInventoryItem(targetUpdated, userAccount?.email).catch(err => console.warn('Erro ao atualizar estoque:', err));
+    }
+  };
+
+  const handleOpenNutriaWithPrompt = (prompt: string) => {
+    setIsFloatingChatOpen(true);
+    handleSendNutriaMessage(prompt);
+  };
+
+  const handleSelectPlan = (plan: SubscriptionPlan, registeredUser?: Partial<UserAccount>) => {
+    let finalUser: UserAccount;
+    setUserAccount(prev => {
+      const base = registeredUser ? { ...effectiveUserAccount, ...registeredUser } : (prev || effectiveUserAccount);
+      const updated: UserAccount = {
+        ...base,
+        plan: plan,
+        isSubscribed: plan !== 'free',
+        subscriptionExpiresAt: plan === 'premium_anual' ? '15/08/2027' : '15/09/2026'
+      };
+      finalUser = updated;
+      try {
+        localStorage.setItem('nutrink_user_session', JSON.stringify(updated));
+        if (updated.email) {
+          localStorage.setItem('nutrink_last_email', updated.email.trim().toLowerCase());
+        }
+      } catch {}
+      return updated;
+    });
+    setIsAuthenticated(true);
+    setIsSubscriptionModalOpen(false);
+    navigate('/dashboard');
+
+    const userName = registeredUser?.name || userAccount?.name || 'Doutor(a)';
+
+    const upgradeMsg: NutriaMessage = {
+      id: `msg-upg-${Date.now()}`,
+      role: 'assistant',
+      content: `# 🎉 PARABÉNS, ${userName.toUpperCase()}! SEU CONSULTÓRIO ESTÁ ATIVADO!
+      
+Seu acesso ao **Plano ${plan === 'premium_anual' ? 'Premium Anual (R$ 899,00 à vista via PIX)' : 'Premium Mensal (R$ 89,90 à vista via PIX)'}** foi liberado e seu cadastro foi registrado com sucesso!
+
+### 🌟 Seu Consultório Inteligente Desbloqueado:
+- **Copiloto NUTRIA ILIMITADO**: Sem restrições de mensagens, cálculos ou consultas.
+- **Relatórios & Prescrições Completas**: Prontas para impressão e envio aos pacientes.
+- **NutriCalc & Todos os Módulos**: Acesso irrestrito a todas as ferramentas clínicas e financeiras.`,
+      timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    };
+    setNutriaMessages(prev => [...prev, upgradeMsg]);
+  };
+
+  // Intercept Mercado Pago return URL redirects
+  useEffect(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const pathname = window.location.pathname.toLowerCase();
+      const paymentStatus = urlParams.get('payment_status') || urlParams.get('collection_status') || urlParams.get('status');
+      const planParam = urlParams.get('plan') as SubscriptionPlan | null;
+
+      const isSuccessRoute = pathname.includes('/sucesso') || paymentStatus === 'approved';
+      const isErrorRoute = pathname.includes('/erro') || paymentStatus === 'rejected' || paymentStatus === 'failure';
+      const isPendingRoute = pathname.includes('/pendente') || paymentStatus === 'pending' || paymentStatus === 'in_process';
+
+      if (isSuccessRoute) {
+        const targetPlan: SubscriptionPlan = planParam === 'premium_anual' ? 'premium_anual' : 'premium_mensal';
+        handleSelectPlan(targetPlan);
+        
+        try {
+          confetti({
+            particleCount: 150,
+            spread: 90,
+            origin: { y: 0.6 }
+          });
+        } catch {}
+
+        navigate('/dashboard');
+      } else if (isPendingRoute) {
+        setNutriaMessages(prev => [
+          ...prev,
+          {
+            id: `msg-pending-${Date.now()}`,
+            role: 'assistant',
+            content: `⏳ **Pagamento em Análise no Mercado Pago!**\n\nRecebemos seu pedido de assinatura. Caso tenha optado por boleto bancário ou PIX em processamento, seu plano será ativado automaticamente assim que a compensação for confirmada.`,
+            timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+          }
+        ]);
+        navigate('/dashboard');
+      } else if (isErrorRoute) {
+        setNutriaMessages(prev => [
+          ...prev,
+          {
+            id: `msg-error-${Date.now()}`,
+            role: 'assistant',
+            content: `⚠️ **Transação não concluída no Mercado Pago.**\n\nO pagamento não foi processado pela operadora. Você pode tentar novamente com outro cartão, saldo ou PIX instantâneo na aba **Planos e Assinaturas**.`,
+            timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+          }
+        ]);
+        navigate('/dashboard');
+      }
+    } catch (e) {
+      console.warn('Erro ao processar retorno do Mercado Pago:', e);
+    }
+  }, []);
+
+  const handleSendNutriaMessage = async (userInput: string) => {
+    const inputLower = userInput.toLowerCase();
+    const isPlanInquiry = inputLower.includes('plano') || inputLower.includes('assinatura') || inputLower.includes('preço') || inputLower.includes('valor') || inputLower.includes('quanto custa') || inputLower.includes('upgrade');
+
+    const quota = getDailyNutriaUsage(userAccount);
+
+    if (quota.isLimitReached && !isPlanInquiry) {
+      const userMsg: NutriaMessage = {
+        id: `msg-${Date.now()}`,
+        role: 'user',
+        content: userInput,
+        timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      };
+
+      const limitBlockedMsg: NutriaMessage = {
+        id: `msg-limit-${Date.now() + 1}`,
+        role: 'assistant',
+        content: `🔒 **Seu limite de 30 mensagens diárias da NÚTRIA IA acabou.** Faça o upgrade para o plano Premium para continuar ou aguarde até amanhã.`,
+        timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        isLocked: true
+      };
+
+      setNutriaMessages(prev => [...prev, userMsg, limitBlockedMsg]);
+      setIsSubscriptionModalOpen(true);
+      return;
+    }
+
+    const userMsg: NutriaMessage = {
+      id: `msg-${Date.now()}`,
+      role: 'user',
+      content: userInput,
+      timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    };
+
+    setNutriaMessages(prev => [...prev, userMsg]);
+    setIsNutriaLoading(true);
+
+    const nextQuota = incrementDailyNutriaUsage(userAccount);
+    if (userAccount) {
+      setUserAccount(prev => {
+        if (!prev) return prev;
+        const updated = {
+          ...prev,
+          dailyMessageCount: nextQuota.count,
+          monthlyMessageCount: (prev.monthlyMessageCount || 0) + 1
+        };
+        try { localStorage.setItem('nutrink_user_session', JSON.stringify(updated)); } catch {}
+        return updated;
+      });
+    } else {
+      setGuestDailyCount(nextQuota.count);
+    }
+
+    try {
+      const context = {
+        activePatient: activePatient ? {
+          id: activePatient.id,
+          name: activePatient.name,
+          age: activePatient.age,
+          gender: activePatient.gender,
+          weightKg: activePatient.currentWeightKg,
+          heightCm: activePatient.heightCm,
+          bmi: activePatient.bmi,
+          tmb: activePatient.tmb,
+          get: activePatient.get,
+          bodyFatPercentage: activePatient.bodyFatPercentage,
+          objective: activePatient.objective,
+          allergies: activePatient.anamnese?.foodAllergiesAndIntolerances,
+          medications: activePatient.anamnese?.currentMedicationsAndSupplements,
+          clinicalHistory: activePatient.anamnese?.clinicalHistory,
+          foodPlan: activePatient.foodPlan
+        } : null,
+        todayAppointments: appointments.filter(a => a.date === new Date().toISOString().split('T')[0]).map(a => ({
+          id: a.id,
+          patientName: a.patientName,
+          time: a.time,
+          status: a.status,
+          location: a.location,
+          price: a.price
+        })),
+        patientsSummary: {
+          total: patients.length,
+          names: patients.slice(0, 10).map(p => ({ id: p.id, name: p.name, objective: p.objective }))
+        },
+        financialSummary: {
+          totalRevenue,
+          totalExpenses,
+          balance: totalRevenue - totalExpenses
+        },
+        inventory: inventory,
+        userAccount: {
+          name: effectiveUserAccount.name,
+          plan: effectiveUserAccount.plan,
+          isSubscribed: effectiveUserAccount.isSubscribed,
+          crn: effectiveUserAccount.crn,
+          specialty: effectiveUserAccount.specialty
+        }
+      };
+
+      const response = await callNutriaDirect(userInput, context);
+
+      const assistantMsg: NutriaMessage = {
+        id: `msg-${Date.now() + 1}`,
+        role: 'assistant',
+        content: response.text,
+        timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        actionExecuted: response.actionExecuted
+      };
+
+      setNutriaMessages(prev => [...prev, assistantMsg]);
+
+      if (userAccount?.email) {
+        saveNutriaMessage(userAccount.email, userMsg).catch(err => console.warn('Erro ao salvar msg user no banco:', err));
+        saveNutriaMessage(userAccount.email, assistantMsg).catch(err => console.warn('Erro ao salvar msg assist no banco:', err));
+      }
+
+      if (response.actionExecuted) {
+        executeNutriaAction(response.actionExecuted);
+      }
+    } catch (error: any) {
+      console.error(error);
+      console.error('Error in Nutria conversation (Gemini 3.7 Flash):', error?.message || error);
+      const errorMsg: NutriaMessage = {
+        id: `msg-err-${Date.now()}`,
+        role: 'assistant',
+        content: `Desculpe, ocorreu uma oscilação na conexão ao processar sua solicitação: ${error?.message ? `(${error.message})` : 'consulte o console'}. Por favor, tente novamente.`,
+        timestamp: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      };
+      setNutriaMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setIsNutriaLoading(false);
+    }
+  };
+
+  const executeNutriaAction = (actionExecuted: NutriaActionExecution) => {
+    try {
+      const payload = actionExecuted.payload || {};
+
+      if (actionExecuted.type === 'patient_created' || actionExecuted.type === 'CREATE_PATIENT') {
+        const rawWeight = parseFloat(payload.weightKg || payload.currentWeightKg || payload.peso || 70);
+        const rawHeight = parseFloat(payload.heightCm || payload.altura || 170);
+        const heightM = rawHeight / 100;
+        const bmi = heightM > 0 ? parseFloat((rawWeight / (heightM * heightM)).toFixed(1)) : 24.2;
+
+        const newPat: Patient = {
+          id: payload.id || `pat-${Date.now()}`,
+          name: payload.name || payload.nome || 'Novo Paciente',
+          age: parseInt(payload.age || payload.idade || 30, 10),
+          gender: payload.gender || payload.genero || 'feminino',
+          objective: payload.objective || payload.objetivo || 'emagrecimento',
+          currentWeightKg: rawWeight,
+          heightCm: rawHeight,
+          bmi: bmi,
+          bodyFatPercentage: parseFloat(payload.bodyFatPercentage || 20),
+          status: 'ativo',
+          phone: payload.phone || '(11) 99999-0000',
+          email: payload.email || `${(payload.name || 'paciente').toLowerCase().replace(/\s+/g, '')}@email.com`,
+          notes: payload.notes || payload.observacoes || 'Cadastrado via copiloto autônomo NÚTRIA.',
+          tags: [payload.objective || 'nutricao_clinica'],
+          createdAt: new Date().toISOString().split('T')[0],
+          anamnese: {
+            clinicalHistory: payload.notes || 'Sem restrições relatadas.',
+            foodAllergiesAndIntolerances: 'Nenhuma alergia relatada.',
+            currentMedicationsAndSupplements: 'Nenhum medicamento informado.',
+            waterIntakeLiters: 2.5
+          },
+          evolutionHistory: [
+            {
+              id: `ev-${Date.now()}`,
+              date: new Date().toISOString().split('T')[0],
+              weightKg: rawWeight,
+              heightCm: rawHeight,
+              bmi: bmi,
+              bodyFatPercentage: parseFloat(payload.bodyFatPercentage || 20),
+              notes: 'Avaliação inicial cadastrada pela NÚTRIA.'
+            }
+          ]
+        };
+
+        setPatients(prev => [newPat, ...prev]);
+        setSelectedPatientId(newPat.id);
+        navigate(`/pacientes/${newPat.id}`);
+      } else if (actionExecuted.type === 'patient_selected' || actionExecuted.type === 'SELECT_PATIENT') {
+        const pName = (payload.patientName || '').toLowerCase();
+        const found = patients.find(p => p.id === payload.patientId || (pName && p.name.toLowerCase().includes(pName)));
+        if (found) {
+          setSelectedPatientId(found.id);
+          navigate(`/pacientes/${found.id}`);
+        }
+      } else if (actionExecuted.type === 'appointment_scheduled' || actionExecuted.type === 'SCHEDULE_APPOINTMENT') {
+        const newApt: Appointment = {
+          id: payload.id || `apt-${Date.now()}`,
+          patientId: payload.patientId || (activePatient ? activePatient.id : 'pat-general'),
+          patientName: payload.patientName || (activePatient ? activePatient.name : 'Paciente NutrinK'),
+          date: payload.date || new Date().toISOString().split('T')[0],
+          time: payload.time || '14:00',
+          durationMinutes: payload.durationMinutes || 50,
+          type: payload.type || 'retorno',
+          status: payload.status || 'confirmada',
+          location: payload.location || 'presencial_consultorio',
+          modality: payload.location === 'online_video' ? 'online' : 'presencial',
+          price: payload.price || payload.value || 350,
+          notes: payload.notes || 'Agendamento registrado pelo copiloto NÚTRIA.'
+        };
+        setAppointments(prev => [...prev, newApt]);
+        navigate('/agenda');
+      } else if (actionExecuted.type === 'patient_deleted' || actionExecuted.type === 'DELETE_PATIENT') {
+        const pName = (payload.patientName || '').toLowerCase();
+        const found = patients.find(p => p.id === payload.patientId || (pName && p.name.toLowerCase().includes(pName)));
+        if (found) {
+          handleDeletePatient(found.id);
+        } else if (payload.patientId) {
+          handleDeletePatient(payload.patientId);
+        }
+      } else if (actionExecuted.type === 'appointment_rescheduled' || actionExecuted.type === 'RESCHEDULE_APPOINTMENT') {
+        const pName = (payload.patientName || '').toLowerCase();
+        const newTime = payload.newTime || payload.novoHorario || '15:00';
+        const newDate = payload.newDate || payload.novaData;
+        setAppointments(prev => prev.map(a => {
+          if ((pName && a.patientName?.toLowerCase().includes(pName)) || a.patientId === payload.patientId) {
+            return {
+              ...a,
+              time: newTime,
+              date: newDate || a.date,
+              notes: `${a.notes || ''} (Remarcada via NÚTRIA)`
+            };
+          }
+          return a;
+        }));
+        navigate('/agenda');
+      } else if (actionExecuted.type === 'appointment_cancelled' || actionExecuted.type === 'CANCEL_APPOINTMENT') {
+        const pName = (payload.patientName || '').toLowerCase();
+        setAppointments(prev => prev.map(a => {
+          if ((pName && a.patientName?.toLowerCase().includes(pName)) || a.patientId === payload.patientId) {
+            return {
+              ...a,
+              status: 'cancelada',
+              notes: `${a.notes || ''} (Cancelada via NÚTRIA: ${payload.reason || 'solicitação'})`
+            };
+          }
+          return a;
+        }));
+        navigate('/agenda');
+      } else if (actionExecuted.type === 'transaction_logged' || actionExecuted.type === 'ADD_FINANCE_TRANSACTION') {
+        const newTx: FinancialTransaction = {
+          id: payload.id || `tx-${Date.now()}`,
+          description: payload.description || payload.descricao || 'Consulta Nutricional',
+          amount: parseFloat(payload.amount || payload.valor || 350),
+          type: payload.type || 'receita',
+          category: payload.category || 'Consultas',
+          date: payload.date || new Date().toISOString().split('T')[0],
+          paymentMethod: payload.paymentMethod || 'pix',
+          status: 'concluido'
+        };
+        setTransactions(prev => [newTx, ...prev]);
+        navigate('/financeiro');
+      } else if (actionExecuted.type === 'inventory_item_created' || actionExecuted.type === 'ADD_INVENTORY_ITEM') {
+        const newItem: InventoryItem = {
+          id: payload.id || `inv-${Date.now()}`,
+          name: payload.name || 'Novo Suplemento / Insumo',
+          category: payload.category || 'suplementos',
+          subcategory: payload.subcategory || 'Suplementos Nutricionais',
+          currentStock: Number(payload.currentStock ?? payload.quantity ?? 10),
+          minStock: Number(payload.minStock ?? 3),
+          unit: payload.unit || 'unidades',
+          unitLabel: payload.unitLabel || payload.unit || 'unidades',
+          lotNumber: payload.lotNumber || `LOTE-${new Date().getFullYear()}-01`,
+          expirationDate: payload.expirationDate || '2027-12-31',
+          location: payload.location || 'Consultório Principal',
+          notes: payload.notes || 'Cadastrado pelo copiloto NÚTRIA.',
+          createdAt: new Date().toISOString(),
+          history: [
+            {
+              id: `mov-${Date.now()}`,
+              date: new Date().toISOString(),
+              type: 'entrada',
+              quantity: Number(payload.currentStock ?? payload.quantity ?? 10),
+              reason: 'Cadastro inicial via comando de chat com a NÚTRIA IA'
+            }
+          ]
+        };
+        handleSaveInventoryItem(newItem);
+      } else if (actionExecuted.type === 'inventory_stock_updated' || actionExecuted.type === 'UPDATE_INVENTORY_STOCK') {
+        const targetId = payload.itemId;
+        const qty = Number(payload.quantity || 1);
+        const movType = payload.type || 'entrada';
+        const reason = payload.reason || (movType === 'entrada' ? 'Entrada no estoque' : 'Saída no estoque');
+
+        if (targetId) {
+          handleLogStockMovement(targetId, {
+            type: movType,
+            quantity: qty,
+            reason: reason,
+            performedBy: userAccount?.name || 'NÚTRIA IA'
+          });
+        } else if (inventory.length > 0) {
+          // Se não tiver ID explícito, aplica no primeiro item correspondente ou mais recente
+          const found = payload.itemName 
+            ? inventory.find(i => i.name.toLowerCase().includes(payload.itemName.toLowerCase()))
+            : inventory[0];
+          if (found) {
+            handleLogStockMovement(found.id, {
+              type: movType,
+              quantity: qty,
+              reason: reason,
+              performedBy: userAccount?.name || 'NÚTRIA IA'
+            });
+          }
+        }
+      } else if (actionExecuted.type === 'inventory_stock_deducted' || actionExecuted.type === 'DEDUCT_INVENTORY_STOCK') {
+        const targetId = payload.itemId;
+        const qty = Number(payload.quantity || 1);
+        const reason = payload.reason || 'Baixa no estoque via NÚTRIA IA';
+
+        if (targetId) {
+          handleLogStockMovement(targetId, {
+            type: 'saida',
+            quantity: qty,
+            reason: reason,
+            performedBy: userAccount?.name || 'NÚTRIA IA'
+          });
+        } else if (inventory.length > 0) {
+          const found = payload.itemName 
+            ? inventory.find(i => i.name.toLowerCase().includes(payload.itemName.toLowerCase()))
+            : inventory[0];
+          if (found) {
+            handleLogStockMovement(found.id, {
+              type: 'saida',
+              quantity: qty,
+              reason: reason,
+              performedBy: userAccount?.name || 'NÚTRIA IA'
+            });
+          }
+        }
+      } else if (actionExecuted.type === 'NAVIGATE_TAB') {
+        const tab = payload.tab;
+        if (tab === 'inventory' || tab === 'estoque') {
+          navigate('/estoque');
+        } else if (tab === 'patients' || tab === 'pacientes') {
+          navigate('/pacientes');
+        } else if (tab === 'calendar' || tab === 'agenda') {
+          navigate('/agenda');
+        } else if (tab === 'nutricalc' || tab === 'antropometria') {
+          navigate('/antropometria');
+        } else if (tab === 'finance' || tab === 'financeiro') {
+          navigate('/financeiro');
+        } else if (tab === 'plans' || tab === 'planos') {
+          navigate('/planos');
+        } else if (tab === 'settings' || tab === 'configuracoes') {
+          navigate('/configuracoes');
+        }
+      }
+    } catch (e) {
+      console.warn('Erro ao executar ação local da NÚTRIA:', e);
+    }
+  };
+
+  // Acesso direto ao Dashboard e funcionalidades (sem tela de bloqueio de Onboarding)
+  return (
+    <div className="min-h-screen bg-[#0D0B18] text-white flex flex-col font-sans selection:bg-fuchsia-600 selection:text-white">
+      
+      {/* Global Header with Brand and Quick Actions */}
+      <Header
+        onOpenNutriaChat={() => setIsFloatingChatOpen(true)}
+        onOpenNewPatient={() => setIsNewPatientOpen(true)}
+        onOpenNewAppointment={() => {
+          setPreSelectedPatientForApt(null);
+          setIsNewAppointmentOpen(true);
+        }}
+        onOpenNewTransaction={() => setIsNewTransactionOpen(true)}
+        onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+        onOpenProfileModal={() => setIsProfileModalOpen(true)}
+        onOpenLoginModal={() => handleOpenLoginModal('login')}
+        userAccount={effectiveUserAccount}
+        globalSearch={globalSearch}
+        setGlobalSearch={setGlobalSearch}
+        activePatientCount={patients.length}
+      />
+
+      {/* Global Navigation Bar */}
+      <Navigation
+        onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+        todayAppointmentsCount={appointments.filter(a => a.date === new Date().toISOString().split('T')[0]).length}
+        pendingAppointmentsCount={appointments.filter(a => a.status === 'agendada').length}
+        isSubscribed={effectiveUserAccount.isSubscribed}
+      />
+
+      {/* Main Dynamic View with Browser URL Routing */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6">
+        
+        <Suspense fallback={<RouteLoadingFallback />}>
+          <Routes>
+            
+            {/* Painel Clínico Principal */}
+            <Route path="/" element={
+              <DashboardView
+                patients={patients}
+                appointments={appointments}
+                transactions={transactions}
+                userAccount={userAccount}
+                onSelectPatient={(id) => {
+                  setSelectedPatientId(id);
+                  navigate(`/pacientes/${id}`);
+                }}
+                onOpenNewPatient={() => setIsNewPatientOpen(true)}
+                onOpenNewAppointment={() => {
+                  setPreSelectedPatientForApt(null);
+                  setIsNewAppointmentOpen(true);
+                }}
+                onOpenNewTransaction={() => setIsNewTransactionOpen(true)}
+                onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+                onUpdateAppointmentStatus={handleUpdateAppointmentStatus}
+                onOpenProfileModal={() => setIsProfileModalOpen(true)}
+                onOpenAppointmentDetails={handleOpenAppointmentDetails}
+                onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              />
+            } />
+            <Route path="/dashboard" element={<Navigate to="/" replace />} />
+            <Route path="/onboarding" element={<Navigate to="/" replace />} />
+            <Route path="/apresentacao" element={
+              <OnboardingView
+                onCompleteAuth={(user) => {
+                  handleLoginAs(user);
+                  navigate('/');
+                }}
+                onOpenTermsDoc={(pageId) => {
+                  setActiveInstitutionalPageId(pageId);
+                  setIsInstitutionalModalOpen(true);
+                }}
+              />
+            } />
+
+          {/* Pacientes & Prontuários (Lista e Detalhes) */}
+          <Route path="/pacientes" element={
+            <PatientsView
+              patients={patients}
+              selectedPatientId={null}
+              onSelectPatient={(id) => {
+                if (id) navigate(`/pacientes/${id}`);
+              }}
+              onOpenNewPatient={() => setIsNewPatientOpen(true)}
+              onOpenNewAppointmentWithPatient={handleOpenNewAppointmentWithPatient}
+              onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+              onUpdatePatient={handleUpdatePatient}
+              onDeletePatient={handleDeletePatient}
+              foodDatabase={INITIAL_FOOD_DATABASE}
+              userAccount={userAccount || undefined}
+              onStartTelemedicine={(patientId) => {
+                setSelectedPatientId(patientId);
+                navigate('/telemedicina');
+              }}
+              onNavigateToNutriCalc={(patientId) => {
+                setSelectedPatientId(patientId);
+                navigate('/antropometria');
+              }}
+              appointments={appointments}
+              onUpdateAppointmentStatus={handleUpdateAppointmentStatus}
+              onOpenAppointmentDetails={handleOpenAppointmentDetails}
+            />
+          } />
+
+          <Route path="/pacientes/:id" element={
+            <PatientDetailRouteWrapper
+              patients={patients}
+              onOpenNewPatient={() => setIsNewPatientOpen(true)}
+              onOpenNewAppointmentWithPatient={handleOpenNewAppointmentWithPatient}
+              onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+              onUpdatePatient={handleUpdatePatient}
+              onDeletePatient={handleDeletePatient}
+              foodDatabase={INITIAL_FOOD_DATABASE}
+              userAccount={userAccount || undefined}
+              onStartTelemedicine={(patientId: string) => {
+                setSelectedPatientId(patientId);
+                navigate('/telemedicina');
+              }}
+              onNavigateToNutriCalc={(patientId: string) => {
+                setSelectedPatientId(patientId);
+                navigate('/antropometria');
+              }}
+              appointments={appointments}
+              onUpdateAppointmentStatus={handleUpdateAppointmentStatus}
+              onOpenAppointmentDetails={handleOpenAppointmentDetails}
+            />
+          } />
+
+          {/* Agenda de Consultas */}
+          <Route path="/agenda" element={
+            <CalendarView
+              appointments={appointments}
+              patients={patients}
+              onOpenNewAppointment={() => {
+                setPreSelectedPatientForApt(null);
+                setIsNewAppointmentOpen(true);
+              }}
+              onUpdateAppointmentStatus={handleUpdateAppointmentStatus}
+              onSelectPatient={(id) => {
+                setSelectedPatientId(id);
+                navigate(`/pacientes/${id}`);
+              }}
+              onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+              onStartTelemedicine={(patientId) => {
+                setSelectedPatientId(patientId);
+                navigate('/telemedicina');
+              }}
+              onOpenAppointmentDetails={handleOpenAppointmentDetails}
+            />
+          } />
+          <Route path="/consultas" element={<Navigate to="/agenda" replace />} />
+
+          {/* Planos Alimentares (Dieta & TACO) */}
+          <Route path="/planos-alimentares" element={
+            <MealPlansGlobalView
+              patients={patients}
+              onUpdatePatient={handleUpdatePatient}
+              foodDatabase={INITIAL_FOOD_DATABASE}
+              onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+              userAccount={effectiveUserAccount}
+            />
+          } />
+          <Route path="/dietas" element={<Navigate to="/planos-alimentares" replace />} />
+
+          {/* Antropometria & NutriCalc */}
+          <Route path="/antropometria" element={
+            <NutriCalcView
+              patients={patients}
+              selectedPatientId={selectedPatientId}
+              onSelectPatient={setSelectedPatientId}
+              onUpdatePatient={handleUpdatePatient}
+              userAccount={effectiveUserAccount}
+              onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+            />
+          } />
+          <Route path="/nutricalc" element={<Navigate to="/antropometria" replace />} />
+          <Route path="/calculos" element={<Navigate to="/antropometria" replace />} />
+
+          {/* Exames & Biomarcadores */}
+          <Route path="/exames" element={
+            <ExamsGlobalView
+              patients={patients}
+              onUpdatePatient={handleUpdatePatient}
+              onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+              userAccount={effectiveUserAccount}
+              initialSelectedPatientId={selectedPatientId}
+            />
+          } />
+
+          {/* Prescrições & Fórmulas */}
+          <Route path="/prescricoes" element={
+            <PrescriptionsGlobalView
+              patients={patients}
+              onUpdatePatient={handleUpdatePatient}
+              onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+              userAccount={effectiveUserAccount}
+              initialSelectedPatientId={selectedPatientId}
+            />
+          } />
+          <Route path="/formulas" element={<Navigate to="/prescricoes" replace />} />
+
+          {/* Gestão de Estoque & Insumos */}
+          <Route path="/estoque" element={
+            <InventoryView
+              inventory={inventory}
+              patients={patients}
+              onSaveItem={handleSaveInventoryItem}
+              onDeleteItem={handleDeleteInventoryItem}
+              onLogMovement={handleLogStockMovement}
+              onRecordMovement={handleLogStockMovement}
+              onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+              userAccount={effectiveUserAccount}
+            />
+          } />
+          <Route path="/insumos" element={<Navigate to="/estoque" replace />} />
+          <Route path="/inventario" element={<Navigate to="/estoque" replace />} />
+
+          {/* Telemedicina & Vídeo */}
+          <Route path="/telemedicina" element={
+            <TelemedicineView
+              patients={patients}
+              appointments={appointments}
+              userAccount={effectiveUserAccount}
+              initialRoomName={telemedRoomFromUrl || undefined}
+              initialPatientName={telemedPatientFromUrl || undefined}
+              isGuestPatient={!isAuthenticated && Boolean(telemedRoomFromUrl)}
+              onUpdatePatient={handleUpdatePatient}
+              onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onNavigateTab={(tab) => {
+                if (tab === 'patients' && selectedPatientId) {
+                  navigate(`/pacientes/${selectedPatientId}`);
+                } else if (tab === 'patients') {
+                  navigate('/pacientes');
+                } else if (tab === 'calendar') {
+                  navigate('/agenda');
+                } else if (tab === 'finance') {
+                  navigate('/financeiro');
+                } else if (tab === 'nutricalc') {
+                  navigate('/antropometria');
+                } else {
+                  navigate('/');
+                }
+              }}
+            />
+          } />
+          <Route path="/telemedicina/:roomName" element={
+            <TelemedicineRouteWrapper
+              patients={patients}
+              appointments={appointments}
+              userAccount={effectiveUserAccount}
+              initialPatientName={telemedPatientFromUrl || undefined}
+              isGuestPatient={!isAuthenticated && Boolean(telemedRoomFromUrl)}
+              onUpdatePatient={handleUpdatePatient}
+              onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onNavigateTab={(tab: string) => navigate(`/${tab}`)}
+            />
+          } />
+
+          {/* Financeiro */}
+          <Route path="/financeiro" element={
+            <FinanceView
+              transactions={transactions}
+              patients={patients}
+              appointments={appointments}
+              onOpenNewTransaction={() => setIsNewTransactionOpen(true)}
+              onOpenNutriaWithPrompt={handleOpenNutriaWithPrompt}
+            />
+          } />
+          <Route path="/financas" element={<Navigate to="/financeiro" replace />} />
+
+          {/* Copiloto NÚTRIA IA Hub */}
+          <Route path="/nutria" element={
+            <div className="space-y-4">
+              <div className="flex items-center justify-between pb-2">
+                <div>
+                  <h1 className="text-xl font-bold text-white flex items-center gap-2">
+                    <NutriaAvatar size="sm" className="w-6 h-6 border-fuchsia-400/60 inline-block shadow" />
+                    Central NÚTRIA • Assistente & Copiloto Clínico
+                  </h1>
+                  <p className="text-xs text-purple-300">
+                    Gerencie prontuários, planos alimentares, exames e rotinas por texto ou voz.
+                  </p>
+                </div>
+              </div>
+
+              <NutriaCopilot
+                messages={nutriaMessages}
+                onSendMessage={handleSendNutriaMessage}
+                isLoading={isNutriaLoading}
+                activePatient={activePatient}
+                todayAppointments={appointments.filter(a => a.date === new Date().toISOString().split('T')[0])}
+                patientsCount={patients.length}
+                monthlyRevenue={totalRevenue}
+                monthlyExpenses={totalExpenses}
+                userAccount={effectiveUserAccount}
+                onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+                onOpenLoginModal={(tab) => handleOpenLoginModal(tab || 'register')}
+                onClearMessages={handleClearNutriaHistory}
+              />
+            </div>
+          } />
+          <Route path="/copiloto" element={<Navigate to="/nutria" replace />} />
+          <Route path="/nutria_hub" element={<Navigate to="/nutria" replace />} />
+
+          {/* Planos e Assinaturas */}
+          <Route path="/planos" element={
+            <MercadoPagoSubscriptionsView
+              userAccount={userAccount || undefined}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onSelectPlan={(plan, billingCycle) => {
+                if (userAccount) {
+                  const planId = billingCycle === 'annual' ? 'premium_anual' : 'premium_mensal';
+                  const upgradedUser: UserAccount = {
+                    ...userAccount,
+                    plan: planId,
+                    isSubscribed: true,
+                    dailyMessageLimit: 99999,
+                    monthlyMessageLimit: 99999
+                  };
+                  setUserAccount(upgradedUser);
+                  localStorage.setItem('nutrink_user_session', JSON.stringify(upgradedUser));
+                }
+              }}
+            />
+          } />
+          <Route path="/assinatura" element={<Navigate to="/planos" replace />} />
+          <Route path="/assinaturas" element={<Navigate to="/planos" replace />} />
+          <Route path="/precos" element={<Navigate to="/planos" replace />} />
+
+          {/* Configurações & Perfil */}
+          <Route path="/configuracoes" element={
+            <SettingsGlobalView
+              userAccount={effectiveUserAccount}
+              onSaveProfile={(updated) => {
+                const updatedFull: UserAccount = { ...effectiveUserAccount, ...updated };
+                setUserAccount(updatedFull);
+                try {
+                  localStorage.setItem('nutrink_user_session', JSON.stringify(updatedFull));
+                } catch {}
+                saveProfile(updatedFull).catch(err => console.warn('Erro ao salvar:', err));
+              }}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onLogout={handleLogout}
+            />
+          } />
+          <Route path="/perfil" element={<Navigate to="/configuracoes" replace />} />
+
+          {/* Páginas Institucionais & Legais com URLs próprias */}
+          <Route path="/sobre" element={
+            <InstitutionalPageView
+              pageId="sobre"
+              onOpenNutriaPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onOpenLoginModal={() => handleOpenLoginModal('login')}
+            />
+          } />
+
+          <Route path="/recursos" element={
+            <InstitutionalPageView
+              pageId="recursos"
+              onOpenNutriaPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onOpenLoginModal={() => handleOpenLoginModal('login')}
+            />
+          } />
+
+          <Route path="/metodologia" element={
+            <InstitutionalPageView
+              pageId="metodologia"
+              onOpenNutriaPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onOpenLoginModal={() => handleOpenLoginModal('login')}
+            />
+          } />
+
+          <Route path="/clientes" element={
+            <InstitutionalPageView
+              pageId="clientes"
+              onOpenNutriaPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onOpenLoginModal={() => handleOpenLoginModal('login')}
+            />
+          } />
+
+          <Route path="/faq" element={
+            <InstitutionalPageView
+              pageId="faq"
+              onOpenNutriaPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onOpenLoginModal={() => handleOpenLoginModal('login')}
+            />
+          } />
+
+          <Route path="/privacidade" element={
+            <InstitutionalPageView
+              pageId="privacidade_lgpd"
+              onOpenNutriaPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onOpenLoginModal={() => handleOpenLoginModal('login')}
+            />
+          } />
+          <Route path="/privacidade_lgpd" element={<Navigate to="/privacidade" replace />} />
+
+          <Route path="/termos" element={
+            <InstitutionalPageView
+              pageId="termos_servico"
+              onOpenNutriaPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onOpenLoginModal={() => handleOpenLoginModal('login')}
+            />
+          } />
+          <Route path="/termos_servico" element={<Navigate to="/termos" replace />} />
+
+          <Route path="/politica-uso-aceitavel" element={
+            <InstitutionalPageView
+              pageId="politica_uso_aceitavel"
+              onOpenNutriaPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onOpenLoginModal={() => handleOpenLoginModal('login')}
+            />
+          } />
+          <Route path="/politica_uso_aceitavel" element={<Navigate to="/politica-uso-aceitavel" replace />} />
+
+          <Route path="/suporte" element={
+            <InstitutionalPageView
+              pageId="fale_conosco"
+              onOpenNutriaPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onOpenLoginModal={() => handleOpenLoginModal('login')}
+            />
+          } />
+          <Route path="/fale_conosco" element={<Navigate to="/suporte" replace />} />
+          <Route path="/contato" element={<Navigate to="/suporte" replace />} />
+
+          <Route path="/docs/:pageId" element={
+            <InstitutionalDocRouteWrapper
+              onOpenNutriaPrompt={handleOpenNutriaWithPrompt}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onOpenLoginModal={() => handleOpenLoginModal('login')}
+            />
+          } />
+
+          {/* Redirecionamentos de rotas antigas */}
+          <Route path="/blog" element={<Navigate to="/" replace />} />
+          <Route path="/blog/:slug" element={<Navigate to="/" replace />} />
+          <Route path="/artigos" element={<Navigate to="/" replace />} />
+          <Route path="/conteudo" element={<Navigate to="/" replace />} />
+
+          {/* Catch-all fallback */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+
+        </Routes>
+      </Suspense>
+
+      </main>
+
+      {/* Institutional Footer */}
+      <Footer 
+        onOpenPage={handleOpenInstitutionalPage}
+        onOpenPlans={() => setIsSubscriptionModalOpen(true)}
+        onOpenLogin={handleOpenLoginModal}
+      />
+
+      {/* PWA Fixed Responsive Bottom Navigation Bar */}
+      <BottomNavigation
+        onOpenNutriaChat={() => setIsFloatingChatOpen(true)}
+        unreadNutriaAlerts={2}
+        todayAppointmentsCount={appointments.filter(a => a.date === new Date().toISOString().split('T')[0]).length}
+      />
+
+      {/* Floating NÚTRIA Action Button (when drawer is closed - hidden on mobile screens) */}
+      {!isFloatingChatOpen && (
+        <button
+          onClick={() => setIsFloatingChatOpen(true)}
+          className="hidden md:flex fixed bottom-6 right-6 z-40 px-4 py-2.5 bg-gradient-to-r from-fuchsia-600 via-purple-600 to-indigo-600 hover:from-fuchsia-500 hover:to-purple-500 text-white rounded-full shadow-2xl hover:shadow-fuchsia-500/40 items-center justify-center gap-2.5 font-bold text-sm transition-all hover:scale-105 active:scale-95 border border-fuchsia-400/50 group shadow-purple-950/90 cursor-pointer"
+          id="btn-open-nutria-floating"
+          title="Falar com Copiloto NÚTRIA AI"
+        >
+          <div className="relative shrink-0">
+            <NutriaAvatar size="xs" className="w-5 h-5 border-white/60 shadow" />
+            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-fuchsia-300 rounded-full animate-ping"></span>
+          </div>
+          <span className="truncate text-sm font-bold tracking-tight">
+            Falar com NÚTRIA
+          </span>
+        </button>
+      )}
+
+      {/* Floating NÚTRIA Chat Drawer */}
+      {isFloatingChatOpen && (
+        <div 
+          className="fixed bottom-20 sm:bottom-24 lg:bottom-6 right-2.5 sm:right-4 lg:right-6 z-50 w-[calc(100vw-20px)] sm:w-full max-w-lg p-0.5 sm:p-2 max-h-[80vh] lg:max-h-[85vh] flex flex-col box-border min-w-0"
+        >
+          <Suspense fallback={
+            <div className="bg-[#120326] border border-purple-800/60 rounded-3xl p-6 flex flex-col items-center justify-center min-h-[300px] shadow-2xl">
+              <div className="w-8 h-8 border-2 border-fuchsia-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+              <span className="text-xs text-purple-200">Iniciando NÚTRIA Copiloto...</span>
+            </div>
+          }>
+            <NutriaCopilot
+              messages={nutriaMessages}
+              onSendMessage={handleSendNutriaMessage}
+              isLoading={isNutriaLoading}
+              activePatient={activePatient}
+              todayAppointments={appointments.filter(a => a.date === new Date().toISOString().split('T')[0])}
+              patientsCount={patients.length}
+              monthlyRevenue={totalRevenue}
+              monthlyExpenses={totalExpenses}
+              isFloating={true}
+              onCloseFloating={() => setIsFloatingChatOpen(false)}
+              userAccount={effectiveUserAccount}
+              onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+              onOpenLoginModal={(tab) => handleOpenLoginModal(tab || 'register')}
+              onClearMessages={handleClearNutriaHistory}
+            />
+          </Suspense>
+        </div>
+      )}
+
+      {/* Institutional Document Modal (for quick popups if invoked) */}
+      <Suspense fallback={null}>
+        {isInstitutionalModalOpen && (
+          <InstitutionalDocModal
+            isOpen={isInstitutionalModalOpen}
+            initialPageId={activeInstitutionalPageId}
+            onClose={() => setIsInstitutionalModalOpen(false)}
+            onOpenNutriaPrompt={(prompt) => {
+              setIsInstitutionalModalOpen(false);
+              setIsFloatingChatOpen(true);
+              handleSendNutriaMessage(prompt);
+            }}
+            onOpenSubscriptionModal={() => {
+              setIsInstitutionalModalOpen(false);
+              setIsSubscriptionModalOpen(true);
+            }}
+            onSelectPlan={() => {
+              setIsInstitutionalModalOpen(false);
+              setIsSubscriptionModalOpen(true);
+            }}
+            onOpenLoginModal={() => {
+              setIsInstitutionalModalOpen(false);
+              handleOpenLoginModal('login');
+            }}
+            onOpenLogin={() => {
+              setIsInstitutionalModalOpen(false);
+              handleOpenLoginModal('login');
+            }}
+          />
+        )}
+      </Suspense>
+
+      {/* Login & Authentication Modal (Strictly preserved) */}
+      <LoginModal
+        isOpen={isLoginModalOpen}
+        initialTab={authModalTab}
+        onClose={() => setIsLoginModalOpen(false)}
+        currentUser={userAccount}
+        onLoginAs={handleLoginAs}
+        onOpenTermsDoc={(pageId) => {
+          setIsLoginModalOpen(false);
+          navigate(`/${pageId}`);
+        }}
+        isMandatoryAuth={false}
+      />
+
+      {/* Subscription Plans Modal */}
+      <Suspense fallback={null}>
+        {isSubscriptionModalOpen && (
+          <SubscriptionModal
+            isOpen={isSubscriptionModalOpen}
+            onClose={() => setIsSubscriptionModalOpen(false)}
+            userAccount={effectiveUserAccount}
+            onSelectPlan={(plan, billingCycle, registeredUser) => handleSelectPlan(plan, registeredUser)}
+            isAuthenticated={isAuthenticated}
+            onOpenLoginModal={(tab) => handleOpenLoginModal(tab || 'register')}
+          />
+        )}
+      </Suspense>
+
+      {/* User Account / Profile Modal */}
+      <UserProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        userAccount={effectiveUserAccount}
+        onUpdateUserAccount={(updated) => {
+          const updatedFull: UserAccount = { ...effectiveUserAccount, ...updated };
+          setUserAccount(updatedFull);
+          try {
+            localStorage.setItem('nutrink_user_session', JSON.stringify(updatedFull));
+          } catch {}
+        }}
+        onOpenSubscriptionModal={() => setIsSubscriptionModalOpen(true)}
+        onOpenLoginModal={(tab) => {
+          setIsProfileModalOpen(false);
+          handleOpenLoginModal(tab || 'login');
+        }}
+        onLogout={handleLogout}
+      />
+
+      {/* Clinical Modals */}
+      <NewPatientModal
+        isOpen={isNewPatientOpen}
+        onClose={() => setIsNewPatientOpen(false)}
+        onSavePatient={(newPatient) => {
+          setPatients(prev => [newPatient, ...prev]);
+          savePatientToDb(newPatient, userAccount?.email).catch(err => console.warn('Erro ao persistir novo paciente:', err));
+        }}
+      />
+
+      <NewAppointmentModal
+        isOpen={isNewAppointmentOpen}
+        onClose={() => {
+          setIsNewAppointmentOpen(false);
+          setPreSelectedPatientForApt(null);
+        }}
+        patients={patients}
+        preSelectedPatient={preSelectedPatientForApt}
+        onSaveAppointment={(newApt) => {
+          setAppointments(prev => [...prev, newApt]);
+          saveAppointmentToDb(newApt, userAccount?.email).catch(err => console.warn('Erro ao persistir novo agendamento:', err));
+        }}
+      />
+
+      <AppointmentDetailsModal
+        isOpen={isAppointmentDetailsOpen}
+        onClose={() => {
+          setIsAppointmentDetailsOpen(false);
+          setSelectedAppointmentForDetails(null);
+        }}
+        appointment={selectedAppointmentForDetails}
+        patients={patients}
+        onSaveAppointment={handleSaveAppointmentDetails}
+        onDeleteAppointment={handleDeleteAppointment}
+      />
+
+      <NewTransactionModal
+        isOpen={isNewTransactionOpen}
+        onClose={() => setIsNewTransactionOpen(false)}
+        patients={patients}
+        onSaveTransaction={(newTx) => {
+          setTransactions(prev => [newTx, ...prev]);
+          saveTransactionToDb(newTx, userAccount?.email).catch(err => console.warn('Erro ao persistir nova transação:', err));
+        }}
+      />
+
+    </div>
+  );
+}
+
+export default App;
