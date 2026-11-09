@@ -1,8 +1,10 @@
 import express, { Request, Response } from "express";
+import http from "http";
 import path from "path";
 import crypto from "crypto";
 import dotenv from "dotenv";
-import { GoogleGenAI, Type, FunctionDeclaration, ThinkingLevel } from "@google/genai";
+import { WebSocketServer, WebSocket } from "ws";
+import { GoogleGenAI, Type, FunctionDeclaration, ThinkingLevel, Modality, LiveServerMessage } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { MercadoPagoConfig, Payment as MercadoPagoPayment, Preference as MercadoPagoPreference } from "mercadopago";
 import QRCode from "qrcode";
@@ -3094,6 +3096,101 @@ app.post("/api/nutria/clinical-calc", async (req: Request, res: Response) => {
   }
 });
 
+// Proxy endpoint for general Gemini text generation
+app.post("/api/gemini/generate", async (req: Request, res: Response) => {
+  try {
+    const { prompt, contents, model = "gemini-3.8-flash", systemInstruction, config } = req.body;
+    const ai = getGenAI();
+    if (!ai) {
+      return res.status(503).json({ error: "Gemini AI não inicializado no servidor." });
+    }
+
+    const targetModel = isValidGeminiModelName(model) ? model : "gemini-3.8-flash";
+    const inputContents = contents || (prompt ? [{ role: 'user', parts: [{ text: String(prompt) }] }] : "Olá");
+
+    const response = await ai.models.generateContent({
+      model: targetModel,
+      contents: inputContents,
+      config: {
+        ...(systemInstruction ? { systemInstruction } : {}),
+        ...(config || {})
+      }
+    });
+
+    return res.json({ 
+      text: response.text || "", 
+      model: targetModel,
+      success: true 
+    });
+  } catch (err: any) {
+    console.error("[/api/gemini/generate error]:", err);
+    return res.status(500).json({ error: err.message || "Erro ao gerar resposta no Gemini", success: false });
+  }
+});
+
+// SSE Streaming endpoint for Gemini text generation
+app.post(["/api/gemini/stream", "/api/nutria/stream"], async (req: Request, res: Response) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+
+  const { 
+    message, 
+    prompt, 
+    contents, 
+    model = "gemini-3.8-flash",
+    conversationHistory = [],
+    systemInstruction 
+  } = req.body;
+
+  const ai = getGenAI();
+  if (!ai) {
+    res.write(`data: ${JSON.stringify({ error: "Gemini não inicializado no servidor", done: true })}\n\n`);
+    res.end();
+    return;
+  }
+
+  const queryText = (message || prompt || "").trim();
+  const targetModel = isValidGeminiModelName(model) ? model : "gemini-3.8-flash";
+
+  try {
+    const defaultSysInstruction = `Você é a NÚTRIA, assistente e copiloto de inteligência artificial clínica e nutricional da plataforma NutrinK. Forneça condutas precisas, cálculos metabólicos e orientações clínicas acolhedoras e fundamentadas.`;
+
+    const inputContents = contents || (conversationHistory && conversationHistory.length > 0
+      ? [
+          ...conversationHistory.slice(-8).map((m: any) => ({
+            role: m.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: m.content }]
+          })),
+          { role: 'user', parts: [{ text: queryText }] }
+        ]
+      : [{ role: 'user', parts: [{ text: queryText }] }]);
+
+    const streamResponse = await ai.models.generateContentStream({
+      model: targetModel,
+      contents: inputContents,
+      config: {
+        systemInstruction: systemInstruction || defaultSysInstruction,
+        temperature: 0.35,
+      }
+    });
+
+    for await (const chunk of streamResponse) {
+      if (chunk.text) {
+        res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ done: true, model: targetModel })}\n\n`);
+    res.end();
+  } catch (err: any) {
+    console.error("[/api/gemini/stream error]:", err);
+    res.write(`data: ${JSON.stringify({ error: err.message || "Erro no streaming do Gemini", done: true })}\n\n`);
+    res.end();
+  }
+});
+
 // 404 Handler for all API routes - Guarantees JSON error response and prevents HTML fallback
 app.all("/api/*", (req: Request, res: Response) => {
   console.warn(`[NutrinK 404] Rota de API não encontrada: ${req.method} ${req.originalUrl}`);
@@ -3117,8 +3214,112 @@ app.use((err: any, req: Request, res: Response, next: any) => {
   next(err);
 });
 
-// Vite & Static Server integration
+// Vite, Static Server & Gemini Live WebSocket integration
 async function start() {
+  const httpServer = http.createServer(app);
+  const wss = new WebSocketServer({ noServer: true });
+
+  // Handle WebSocket upgrade for Gemini Live real-time audio
+  httpServer.on("upgrade", (request, socket, head) => {
+    const pathname = request.url ? new URL(request.url, `http://${request.headers.host}`).pathname : "";
+    if (pathname === "/api/gemini/live" || pathname === "/live") {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request);
+      });
+    }
+  });
+
+  // Setup Gemini Live API session
+  wss.on("connection", async (clientWs: WebSocket) => {
+    console.log("[Gemini Live API] Nova conexão de áudio cliente estabelecida");
+    const ai = getGenAI();
+    if (!ai) {
+      clientWs.send(JSON.stringify({ error: "Gemini AI não inicializado no servidor." }));
+      clientWs.close();
+      return;
+    }
+
+    try {
+      const session = await ai.live.connect({
+        model: "gemini-3.8-live",
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
+          },
+          systemInstruction: "Você é a NÚTRIA, assistente e copiloto de inteligência artificial clínica e nutricional da plataforma NutrinK. Fale em português de forma clara, profissional, acolhedora e clinicamente embasada.",
+          outputAudioTranscription: {},
+          inputAudioTranscription: {},
+        },
+        callbacks: {
+          onmessage: (message: LiveServerMessage) => {
+            const content = message.serverContent;
+            if (content?.inputTranscription?.text) {
+              clientWs.send(JSON.stringify({ inputTranscript: content.inputTranscription.text }));
+            }
+            if (content?.outputTranscription?.text) {
+              clientWs.send(JSON.stringify({ outputTranscript: content.outputTranscription.text }));
+            }
+            for (const part of content?.modelTurn?.parts ?? []) {
+              if (part.inlineData?.data) {
+                clientWs.send(JSON.stringify({ audio: part.inlineData.data }));
+              }
+              if (part.text) {
+                clientWs.send(JSON.stringify({ text: part.text }));
+              }
+            }
+            if (content?.interrupted) {
+              clientWs.send(JSON.stringify({ interrupted: true }));
+            }
+          },
+          onerror: (err: any) => {
+            console.error("[Gemini Live Session Error]:", err);
+            try {
+              clientWs.send(JSON.stringify({ error: err?.message || "Erro no canal de áudio Gemini Live" }));
+            } catch {}
+          },
+          onclose: () => {
+            console.log("[Gemini Live Session Finished]");
+            try { clientWs.close(); } catch {}
+          }
+        },
+      });
+
+      clientWs.on("message", (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.audio) {
+            session.sendRealtimeInput({
+              audio: { data: msg.audio, mimeType: "audio/pcm;rate=16000" },
+            });
+          } else if (msg.text) {
+            session.sendRealtimeInput({
+              text: msg.text,
+            });
+          } else if (msg.video) {
+            session.sendRealtimeInput({
+              video: { data: msg.video, mimeType: "image/jpeg" },
+            });
+          }
+        } catch (err: any) {
+          console.error("[Gemini Live Input Parse Error]:", err);
+        }
+      });
+
+      clientWs.on("close", () => {
+        try {
+          session.close();
+        } catch {}
+      });
+    } catch (connectErr: any) {
+      console.error("[Gemini Live Connect Failure]:", connectErr);
+      try {
+        clientWs.send(JSON.stringify({ error: connectErr?.message || "Falha ao conectar com o serviço Gemini Live" }));
+        clientWs.close();
+      } catch {}
+    }
+  });
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -3133,8 +3334,8 @@ async function start() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[NutrinK] NUTRIA Server operacional em http://0.0.0.0:${PORT}`);
+  httpServer.listen(PORT, "0.0.0.0", () => {
+    console.log(`[NutrinK] NUTRIA Server (HTTP + Gemini Live WebSocket) operacional em http://0.0.0.0:${PORT}`);
   });
 }
 

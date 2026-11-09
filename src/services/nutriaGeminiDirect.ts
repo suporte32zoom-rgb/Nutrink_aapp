@@ -8,7 +8,6 @@
  * 4. Tratamento do Histórico de Conversa: Alternância estrita sem duplicação ou repetição de mensagens.
  */
 
-import { GoogleGenAI } from '@google/genai';
 import { NutriaActionExecution, Patient, Appointment, FinancialTransaction, UserAccount, InventoryItem, StockMovement } from '../types';
 import { cleanMathAndLatex } from '../utils/cleanMarkdown';
 
@@ -48,100 +47,17 @@ export function isValidGeminiModelName(name: string | undefined | null): boolean
 }
 
 /**
- * 1. CONFIGURAÇÃO DO MODELO NA API:
- * Configura o modelo prioritário para 'gemini-3.7-flash' (oficial do SDK @google/genai).
- * Lê dinamicamente de process.env.VITE_GEMINI_MODEL / import.meta.env.VITE_GEMINI_MODEL validando o formato.
+ * Modelo oficial padrão configurado no backend NutrinK: gemini-3.8-flash
  */
 export function getClientGeminiModel(): string {
-  // 1. Vite Environment
-  try {
-    if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GEMINI_MODEL) {
-      const modelEnv = String(import.meta.env.VITE_GEMINI_MODEL).trim();
-      if (isValidGeminiModelName(modelEnv)) return modelEnv;
-    }
-  } catch {}
-
-  // 2. Node / Process Environment
-  try {
-    if (typeof process !== 'undefined') {
-      if (isValidGeminiModelName(process.env?.VITE_GEMINI_MODEL)) {
-        return String(process.env.VITE_GEMINI_MODEL).trim();
-      }
-      if (isValidGeminiModelName(process.env?.NEXT_PUBLIC_GEMINI_MODEL)) {
-        return String(process.env.NEXT_PUBLIC_GEMINI_MODEL).trim();
-      }
-      if (isValidGeminiModelName(process.env?.GEMINI_MODEL)) {
-        return String(process.env.GEMINI_MODEL).trim();
-      }
-    }
-  } catch {}
-
-  // 3. Browser Window ou LocalStorage
-  if (typeof window !== 'undefined') {
-    const win = window as any;
-    if (isValidGeminiModelName(win.VITE_GEMINI_MODEL)) {
-      return win.VITE_GEMINI_MODEL.trim();
-    }
-    if (isValidGeminiModelName(win.process?.env?.VITE_GEMINI_MODEL)) {
-      return String(win.process.env.VITE_GEMINI_MODEL).trim();
-    }
-    try {
-      const stored = localStorage.getItem('nutrink_gemini_model') || localStorage.getItem('gemini_model');
-      if (isValidGeminiModelName(stored)) return stored!.trim();
-    } catch {}
-  }
-
-  // Modelo oficial padrão configurado com alta cota e latência ultrarrápida: gemini-3.1-flash-lite
-  return 'gemini-3.1-flash-lite';
+  return 'gemini-3.8-flash';
 }
 
 /**
- * Obtém a chave da API do Gemini a partir do ambiente do cliente com fallback seguro
+ * A chave de API do Gemini é gerenciada estritamente no backend Node.js (process.env.GEMINI_API_KEY).
+ * O navegador não necessita nem armazena credenciais confidenciais.
  */
 export function getClientGeminiApiKey(): string {
-  // 1. Variável Vite padrão NUTRINK ou GEMINI
-  try {
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-      const geminiKey = import.meta.env.VITE_GEMINI_API_KEY || (import.meta.env as any).GEMINI_API_KEY;
-      if (geminiKey && String(geminiKey).trim().length > 5) return String(geminiKey).trim();
-
-      const nutriaKey = (import.meta.env as any).VITE_NUTRINK_GEMINI_API_KEY || (import.meta.env as any).NUTRINK_GEMINI_API_KEY;
-      if (nutriaKey && String(nutriaKey).trim().length > 5) return String(nutriaKey).trim();
-    }
-  } catch {}
-
-  // 2. Variável process.env pública ou embutida
-  try {
-    if (typeof process !== 'undefined' && process.env) {
-      const key = process.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.API_KEY || process.env.GOOGLE_API_KEY;
-      if (key && String(key).trim().length > 5) return String(key).trim();
-
-      const nutriaKey = process.env.NUTRINK_GEMINI_API_KEY || (process.env as any).NEXT_PUBLIC_NUTRINK_GEMINI_API_KEY;
-      if (nutriaKey && String(nutriaKey).trim().length > 5) return String(nutriaKey).trim();
-    }
-  } catch {}
-
-  // 3. Injeção global no window ou localStorage
-  if (typeof window !== 'undefined') {
-    const win = window as any;
-    const winKey = win.VITE_GEMINI_API_KEY || win.GEMINI_API_KEY || win.NUTRINK_GEMINI_API_KEY || win.VITE_NUTRINK_GEMINI_API_KEY || win.NEXT_PUBLIC_GEMINI_API_KEY;
-    if (winKey && typeof winKey === 'string' && winKey.trim().length > 5) {
-      return winKey.trim();
-    }
-    if (win.process?.env?.VITE_GEMINI_API_KEY) {
-      return String(win.process.env.VITE_GEMINI_API_KEY).trim();
-    }
-    if (win.process?.env?.GEMINI_API_KEY) {
-      return String(win.process.env.GEMINI_API_KEY).trim();
-    }
-    try {
-      const localKey = localStorage.getItem('nutrink_gemini_api_key') || localStorage.getItem('gemini_api_key');
-      if (localKey && localKey.trim().length > 5) {
-        return localKey.trim();
-      }
-    } catch {}
-  }
-
   return '';
 }
 
@@ -1363,27 +1279,8 @@ Prescrição estruturada pela NÚTRIA para o consultório NutrinK.`;
 }
 
 /**
- * Cliente singleton do GoogleGenAI
- */
-let cachedGenAIClient: GoogleGenAI | null = null;
-let cachedGenAIApiKey: string = '';
-
-export function getGenAIClient(apiKey: string): GoogleGenAI {
-  if (cachedGenAIClient && cachedGenAIApiKey === apiKey) {
-    return cachedGenAIClient;
-  }
-  cachedGenAIClient = new GoogleGenAI({ apiKey });
-  cachedGenAIApiKey = apiKey;
-  return cachedGenAIClient;
-}
-
-/**
- * Executa a chamada à NÚTRIA com o modelo Gemini 3.7 Flash oficial @google/genai.
- * 
- * - Configura modelo para 'gemini-3.7-flash'.
- * - Utiliza a System Instruction permanente clínica e de gestão do consultório.
- * - Injeta dinamicamente o contexto do paciente ativo e da plataforma.
- * - Trata o histórico de conversa de forma dinâmica sem repetições.
+ * Executa a chamada à NÚTRIA diretamente via servidor seguro (/api/nutria).
+ * Toda a inteligência Gemini é executada no backend com chave de API protegida.
  */
 export async function callNutriaDirect(
   paramsOrMessage: NutriaCallParams | string,
@@ -1410,10 +1307,10 @@ export async function callNutriaDirect(
       }
     : paramsOrMessage;
 
-  // 1. Tenta a rota de alta performance do backend (/api/nutria) primeiro com timeout de 5.5s
+  // 1. Envia a solicitação para o backend seguro (/api/nutria)
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5500);
+    const timeoutId = setTimeout(() => controller.abort(), 9000);
 
     const resp = await fetch('/api/nutria', {
       method: 'POST',
@@ -1447,68 +1344,79 @@ export async function callNutriaDirect(
       }
     }
   } catch (backendErr: any) {
-    console.warn('[NUTRIA AI] Rota /api/nutria falhou ou atingiu timeout:', backendErr);
+    console.warn('[NUTRIA AI] Servidor /api/nutria inacessível temporariamente:', backendErr);
   }
 
-  // 2. Se a rota do servidor falhar e houver chave no cliente, tenta via SDK no cliente com timeout rápido
-  const apiKey = getClientGeminiApiKey();
-  if (apiKey) {
-    const systemInstruction = buildNutriaSystemInstruction(params);
-    const targetModel = getClientGeminiModel();
-    const contents = formatGeminiContents(params.conversationHistory, params.message);
-
-    const candidateModels = [
-      'gemini-3.1-flash-lite',
-      targetModel,
-      'gemini-flash-latest',
-      'gemini-3.8-flash'
-    ].filter((m, idx, arr) => isValidGeminiModelName(m) && arr.indexOf(m) === idx);
-
-    for (const modelToTry of candidateModels) {
-      try {
-        const ai = getGenAIClient(apiKey);
-        const generatePromise = ai.models.generateContent({
-          model: modelToTry,
-          contents: contents,
-          config: {
-            systemInstruction: systemInstruction,
-            temperature: 0.35,
-            maxOutputTokens: 2048,
-          }
-        });
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error(`Timeout no modelo ${modelToTry} (>3.2s)`)), 3200)
-        );
-
-        const response: any = await Promise.race([generatePromise, timeoutPromise]);
-        const textReply = response.text || (response as any)?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        if (textReply && typeof textReply === 'string' && textReply.trim().length > 0) {
-          const actionExecuted = detectOperationalAction(params.message, textReply, params);
-          const cleanedText = cleanMathAndLatex(textReply.trim());
-          return {
-            reply: cleanedText,
-            text: cleanedText,
-            actionExecuted,
-            model: modelToTry
-          };
-        }
-      } catch (sdkError: any) {
-        console.warn(`[NUTRIA AI Gemini SDK] Modelo ${modelToTry} ocupado/lento:`, sdkError?.message || sdkError);
-        continue;
-      }
-    }
-  } else {
-    console.warn('[NUTRIA AI] Nenhuma chave VITE_GEMINI_API_KEY ou GEMINI_API_KEY detectada no cliente para chamada direta.');
-  }
-
-  // 3. Fallback final instantâneo (<15ms): Motor clínico local de alta precisão
+  // 2. Contingência autônoma instantânea (<10ms): Motor clínico determinístico local
   const fallbackLocal = generateFallbackClinicalResponse(params.message, params);
   const cleanedFallback = cleanMathAndLatex(fallbackLocal.reply);
   return {
     ...fallbackLocal,
     reply: cleanedFallback,
     text: cleanedFallback,
-    model: 'gemini-3.7-flash'
+    model: 'gemini-3.8-flash'
   };
+}
+
+/**
+ * Streaming da NÚTRIA em tempo real via Server-Sent Events (/api/nutria/stream)
+ */
+export async function streamNutriaDirect(
+  params: NutriaCallParams,
+  callbacks: {
+    onChunk: (text: string) => void;
+    onComplete?: () => void;
+    onError?: (error: any) => void;
+  }
+): Promise<void> {
+  try {
+    const resp = await fetch('/api/nutria/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: params.message,
+        conversationHistory: params.conversationHistory,
+        activePatient: params.activePatient,
+        patientContext: params.patientContext || params.activePatient,
+        appContext: params.appContext
+      })
+    });
+
+    if (!resp.ok || !resp.body) {
+      throw new Error(`Falha no streaming do servidor: ${resp.status}`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.text) {
+              callbacks.onChunk(data.text);
+            }
+            if (data.done && callbacks.onComplete) {
+              callbacks.onComplete();
+            }
+          } catch {}
+        }
+      }
+    }
+  } catch (err: any) {
+    if (callbacks.onError) {
+      callbacks.onError(err);
+    } else {
+      console.error('[NUTRIA Stream Error]:', err);
+    }
+  }
 }

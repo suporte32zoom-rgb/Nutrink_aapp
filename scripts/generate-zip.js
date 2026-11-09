@@ -49,7 +49,8 @@ function createZip(outputPath) {
       'HOSTINGER_DEPLOY.md',
       'metadata.json',
       'sitemap.xml',
-      'firestore.rules'
+      'firestore.rules',
+      'CNAME'
     ];
 
     rootFiles.forEach(file => {

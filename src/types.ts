@@ -10,7 +10,8 @@ export type PatientObjective =
   | 'reeducacao_alimentar' 
   | 'vegetariano_vegano'
   | 'gestacao_lactacao'
-  | 'outro';
+  | 'outro'
+  | (string & {});
 
 export type Objective = PatientObjective;
 
@@ -29,6 +30,7 @@ export interface FoodItem {
   carbs: number;
   fat: number;
   fiber: number;
+  servingSize?: string;
 }
 
 export interface MealItem {
@@ -94,10 +96,10 @@ export interface PrescriptionItem {
 
 export interface ClinicalPrescription {
   id: string;
-  patientId: string;
+  patientId?: string;
   date: string;
   title: string;
-  type: 'manipulado' | 'fitoterapico' | 'suplemento_esportivo' | 'vitaminas_minerais' | 'personalizado';
+  type: 'manipulado' | 'fitoterapico' | 'suplemento_esportivo' | 'vitaminas_minerais' | 'personalizado' | 'suplemento' | string;
   instructions?: string;
   items: PrescriptionItem[];
   nutriaGenerated?: boolean;
@@ -105,9 +107,9 @@ export interface ClinicalPrescription {
 }
 
 export interface LabMarker {
-  id: string;
+  id?: string;
   marker: string;
-  value: string;
+  value: string | number;
   unit: string;
   referenceRange: string;
   status: 'normal' | 'baixo' | 'elevado' | 'critico';
@@ -116,7 +118,7 @@ export interface LabMarker {
 
 export interface LabExam {
   id: string;
-  patientId: string;
+  patientId?: string;
   date: string;
   title: string;
   laboratory?: string;
@@ -150,7 +152,7 @@ export interface Anamnese {
   dietaryPreferences?: string;
   dietaryAversions?: string;
   routineAndOccupation?: string;
-  bowelHabit?: 'diario_normal' | 'constipado' | 'diarreico' | 'irregular';
+  bowelHabit?: 'diario_normal' | 'constipado' | 'diarreico' | 'irregular' | (string & {});
   sleepHoursPerNight?: number;
   waterIntakeLiters?: number;
   physicalActivity?: string;
@@ -226,7 +228,7 @@ export interface Patient {
   tmb: number;
   get: number;
   anamnese: Anamnese;
-  mealPlan?: MealPlan;
+  mealPlan?: MealPlan | any;
   prescriptions?: ClinicalPrescription[];
   evolutionHistory: AnthropometricRecord[];
   labExams: LabExam[];
@@ -265,6 +267,8 @@ export interface Appointment {
   paymentMethod?: 'pix' | 'cartao_credito' | 'cartao_debito' | 'boleto' | 'dinheiro';
   notes?: string;
   location: 'presencial_consultorio' | 'online_video';
+  modality?: string;
+  value?: number;
 }
 
 export type TransactionType = 'receita' | 'despesa';
@@ -280,7 +284,8 @@ export type TransactionCategory =
   | 'insumos_materiais' 
   | 'cursos_congressos' 
   | 'impostos' 
-  | 'outros';
+  | 'outros'
+  | (string & {});
 
 export interface FinancialTransaction {
   id: string;
@@ -324,7 +329,8 @@ export interface NutriaActionExecution {
     | 'OPEN_SUBSCRIPTION_MODAL'
     | 'UPGRADE_PLAN'
     | 'OPEN_INSTITUTIONAL_DOC'
-    | 'OPEN_LOGIN_MODAL';
+    | 'OPEN_LOGIN_MODAL'
+    | 'DELETE_PATIENT';
   payload: any;
   summary: string;
 }
@@ -355,6 +361,8 @@ export interface UserAccount {
   avatarUrl?: string;
   authProvider?: 'google' | 'local' | 'email';
   googleId?: string;
+  consultationFee?: number;
+  lastDailyMessageDate?: string;
 }
 
 export interface NutriaMessage {
@@ -487,6 +495,7 @@ export interface InventoryItem {
   updatedAt: string;
   lastMovementDate?: string;
   movements?: StockMovement[];
+  history?: any[];
 }
 
 

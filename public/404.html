@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>NutrinK — Sistema de Gestão e Inteligência Clínica</title>
+    <script>
+      // Single Page App router redirect for GitHub Pages static hosting
+      // Converts non-root paths into HashRouter compatible URLs without blank screen
+      var path = window.location.pathname;
+      var search = window.location.search;
+      var hash = window.location.hash;
+
+      // Extract repo name or subpath if running under user.github.io/repo-name
+      // For custom domain (e.g. www.nutrink.com.br), path is directly the route
+      var targetUrl = window.location.origin + '/' + (search ? search : '') + '#' + path + (hash ? hash : '');
+      window.location.replace(targetUrl);
+    </script>
+  </head>
+  <body>
+    <p>Carregando NutrinK...</p>
+  </body>
+</html>

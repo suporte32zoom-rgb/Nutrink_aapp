@@ -28,6 +28,7 @@ import confetti from 'canvas-confetti';
 import { MercadoPagoLogo } from './MercadoPagoLogo';
 import { NutriaAvatar } from './NutriaAvatar';
 import { PixPaymentModal, PixPlanType } from './PixPaymentModal';
+import { UserAccount, SubscriptionPlan } from '../types';
 
 interface MercadoPagoSubscriptionsViewProps {
   userAccount?: UserAccount;

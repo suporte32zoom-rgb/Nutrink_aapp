@@ -336,7 +336,7 @@ export function extractPatientFromVoiceOrText(input: string): ExtractedPatientRe
   // Calculate Clinical Metrics Dinamicamente via Funções Globais NutrinK
   const bmiData = calculateBMI(weightKg, heightCm);
   const bmi = bmiData.bmi;
-  const tmb = calculateMifflinTMB(weightKg, heightCm, age, gender);
+  const tmb = calculateMifflinTMB(gender, weightKg, heightCm, age);
   const activityFactor = 1.375;
   const getVal = calculateGET(tmb, activityFactor);
   const waterRecommendation = calculateWaterRecommendation(weightKg);
@@ -429,7 +429,7 @@ export function extractPatientFromVoiceOrText(input: string): ExtractedPatientRe
 | **% Gordura** | **${bf > 0 ? `${bf}%` : '-'}** | ${bf > 0 ? 'Estimado' : 'Aguardando bioimpedância'} |
 | **Taxa Metabólica Basal (TMB)** | **${tmb > 0 ? `${tmb} kcal/dia` : '-'}** | ${tmb > 0 ? 'Equação Mifflin-St Jeor' : 'Aguardando peso, altura e idade'} |
 | **Gasto Energético Total (GET)** | **${getVal > 0 ? `${getVal} kcal/dia` : '-'}** | ${getVal > 0 ? 'NAF 1.375 (Atividade Moderada)' : 'Aguardando TMB'} |
-| **Meta Hídrica Diária** | **${waterRecommendation.liters > 0 ? `${waterRecommendation.liters} L/dia (${waterRecommendation.totalMl} ml)` : '-'}** | 35 ml/kg/dia |
+| **Meta Hídrica Diária** | **${waterRecommendation.liters > 0 ? `${waterRecommendation.liters} L/dia (${waterRecommendation.ml} ml)` : '-'}** | 35 ml/kg/dia |
 | **Objetivo Clínico** | **${objective.replace('_', ' ').toUpperCase()}** | Conduta Personalizada |
 ${pathologies.length > 0 ? `| **Comorbidades / Alertas** | **${pathologies.join(', ')}** | Protocolo Clínico Específico |` : ''}
 

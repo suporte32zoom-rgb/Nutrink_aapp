@@ -1,11 +1,19 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
+import { HashRouter } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import App from './App.tsx';
 import './index.css';
 import { initGoogleAnalytics } from './services/analytics';
 import { getGoogleClientId } from './services/googleAuth';
+
+// Suporte e normalização para carregamento direto na raiz ou subrotas no GitHub Pages
+if (typeof window !== 'undefined' && window.location.pathname && window.location.pathname !== '/' && !window.location.hash) {
+  const pathName = window.location.pathname;
+  if (!pathName.includes('.')) {
+    window.location.replace(`${window.location.origin}${window.location.search}#${pathName}`);
+  }
+}
 
 // Inicialização do Google Analytics 4 (Execução exclusiva no cliente/browser)
 if (typeof window !== 'undefined') {
@@ -37,9 +45,9 @@ const googleClientId = getGoogleClientId();
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <GoogleOAuthProvider clientId={googleClientId}>
-      <BrowserRouter>
+      <HashRouter>
         <App />
-      </BrowserRouter>
+      </HashRouter>
     </GoogleOAuthProvider>
   </StrictMode>,
 );

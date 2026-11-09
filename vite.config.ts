@@ -5,14 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    base: './',
     plugins: [react(), tailwindcss()],
-    define: {
-      'import.meta.env.VITE_GEMINI_API_KEY': JSON.stringify(process.env.NUTRINK_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || ''),
-      'import.meta.env.VITE_NUTRINK_GEMINI_API_KEY': JSON.stringify(process.env.NUTRINK_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || ''),
-      'process.env.NEXT_PUBLIC_GEMINI_API_KEY': JSON.stringify(process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.NUTRINK_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || ''),
-      'process.env.VITE_GEMINI_API_KEY': JSON.stringify(process.env.VITE_GEMINI_API_KEY || process.env.NUTRINK_GEMINI_API_KEY || process.env.GEMINI_API_KEY || ''),
-      'process.env.NUTRINK_GEMINI_API_KEY': JSON.stringify(process.env.NUTRINK_GEMINI_API_KEY || process.env.GEMINI_API_KEY || ''),
-    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
@@ -37,9 +31,6 @@ export default defineConfig(() => {
             if (id.includes('node_modules')) {
               if (id.includes('firebase')) {
                 return 'vendor-firebase';
-              }
-              if (id.includes('@google/genai')) {
-                return 'vendor-gemini';
               }
             }
           }
