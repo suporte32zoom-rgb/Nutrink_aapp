@@ -50,7 +50,11 @@ function createZip(outputPath) {
       'metadata.json',
       'sitemap.xml',
       'firestore.rules',
-      'CNAME'
+      'CNAME',
+      'manifest.json',
+      'favicon.svg',
+      'icon-192.svg',
+      'icon-512.svg'
     ];
 
     rootFiles.forEach(file => {
