@@ -7,8 +7,7 @@ import {
   DollarSign, 
   Calculator, 
   Bot, 
-  Crown, 
-  Lock,
+  Crown,
   Apple,
   Activity,
   Pill,
@@ -131,9 +130,8 @@ export const Navigation: React.FC<NavigationProps> = ({
       route: '/telemedicina',
       label: 'Telemedicina & Vídeo',
       icon: Video,
-      badge: isTelemedicineActive ? 'AO VIVO' : (!isSubscribed ? 'PRO' : 'HD'),
-      isLive: isTelemedicineActive,
-      isProLocked: !isSubscribed
+      badge: isTelemedicineActive ? 'AO VIVO' : 'HD',
+      isLive: isTelemedicineActive
     },
     {
       id: 'finance',
@@ -298,14 +296,11 @@ export const Navigation: React.FC<NavigationProps> = ({
                   <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                     (item as any).isLive
                       ? 'bg-rose-950 text-rose-300 border border-rose-500/80 animate-pulse flex items-center gap-1'
-                      : (item as any).isProLocked
-                      ? 'bg-amber-950/80 text-amber-300 border border-amber-500/50 flex items-center gap-1'
                       : typeof item.badge === 'number'
                       ? 'bg-fuchsia-900/90 text-fuchsia-200 border border-fuchsia-500/60'
                       : 'bg-[#2e0b59] text-purple-200 border border-purple-700/50'
                   }`}>
                     {(item as any).isLive && <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>}
-                    {(item as any).isProLocked && <Lock className="w-2.5 h-2.5 text-amber-300" />}
                     {item.badge}
                   </span>
                 )}

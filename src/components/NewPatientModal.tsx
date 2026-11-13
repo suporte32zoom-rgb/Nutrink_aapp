@@ -109,10 +109,10 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
       id: `pat-${Date.now()}`,
       name: name.trim(),
       cpf: cpf.trim() || undefined,
-      email: email.trim() || `${name.toLowerCase().replace(/\s+/g, '')}@email.com`,
-      phone: phone.trim() || '(11) 99999-0000',
+      email: email.trim(),
+      phone: phone.trim(),
       gender,
-      birthDate: birthDate || '1998-05-10',
+      birthDate: birthDate || undefined,
       age: numAge,
       heightCm,
       initialWeightKg: numWeight,
@@ -152,6 +152,22 @@ export const NewPatientModal: React.FC<NewPatientModalProps> = ({
     };
 
     onSavePatient(newPatient);
+    setName('');
+    setCpf('');
+    setBirthDate('');
+    setPhone('');
+    setEmail('');
+    setGender('masculino');
+    setAge('');
+    setHeight('');
+    setCurrentWeightKg('');
+    setTargetWeightKg('');
+    setBodyFatPercentage('');
+    setObjective('emagrecimento');
+    setActivityFactor('1.2');
+    setClinicalHistory('');
+    setAllergies('');
+    setMedications('');
     onClose();
   };
 

@@ -542,9 +542,9 @@ export const PatientsView: React.FC<PatientsViewProps> = ({
                 <div className="flex items-center gap-4 text-xs text-purple-200 mt-2 flex-wrap font-medium">
                   <span><strong>{selectedPatient.age} anos</strong> ({selectedPatient.gender})</span>
                   <span>•</span>
-                  <span><Phone className="w-3 h-3 inline mr-1 text-purple-300" />{selectedPatient.phone}</span>
+                  <span><Phone className="w-3 h-3 inline mr-1 text-purple-300" />{selectedPatient.phone || 'Não informado'}</span>
                   <span>•</span>
-                  <span><Mail className="w-3 h-3 inline mr-1 text-purple-300" />{selectedPatient.email}</span>
+                  <span><Mail className="w-3 h-3 inline mr-1 text-purple-300" />{selectedPatient.email || 'Não informado'}</span>
                 </div>
               </div>
             </div>
@@ -1842,7 +1842,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({
             Gestão de Pacientes & Prontuários Integrados
           </h1>
           <p className="text-xs sm:text-sm text-purple-200 mt-1">
-            Total de <strong className="text-white">{patients.length} pacientes</strong> cadastrados no prontuário eletrônico do NutrinK.
+            Total de <strong className="text-white">{patients.length} {patients.length === 1 ? 'paciente' : 'pacientes'}</strong> {patients.length === 1 ? 'cadastrado' : 'cadastrados'} no prontuário eletrônico do NutrinK.
           </p>
         </div>
 
@@ -1981,7 +1981,7 @@ export const PatientsView: React.FC<PatientsViewProps> = ({
               </div>
 
               <div className="mt-4 flex items-center justify-between text-xs text-purple-200 pt-2 border-t border-purple-900/30 font-medium">
-                <span className="truncate max-w-[200px]">{patient.phone}</span>
+                <span className="truncate max-w-[200px]">{patient.phone || 'Sem telefone'}</span>
                 <span className="text-fuchsia-300 font-bold flex items-center gap-1 group-hover:translate-x-1 transition-transform">
                   Abrir Prontuário <ChevronRight className="w-3.5 h-3.5" />
                 </span>

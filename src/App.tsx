@@ -189,8 +189,12 @@ export function App() {
     }
   });
 
-  // Application Data States - Strictly isolated per user email with pre-registered example patient for free exploration
+  // Application Data States - Strictly isolated per user email, starting empty (zerado) for user-added patients
   const [patients, setPatients] = useState<Patient[]>(() => {
+    const filterSample = (list: unknown): Patient[] =>
+      Array.isArray(list)
+        ? list.filter((p: any) => p && p.id && p.id !== 'pat-camila-rodrigues' && !p.tags?.includes('exemplo_degustacao'))
+        : [];
     try {
       const savedUser = localStorage.getItem('nutrink_user_session');
       if (savedUser) {
@@ -199,16 +203,18 @@ export function App() {
         if (email) {
           const saved = localStorage.getItem(`nutrink_patients_${email}`);
           if (saved) {
-            const parsedList = JSON.parse(saved);
-            if (Array.isArray(parsedList) && parsedList.length > 0) {
-              return parsedList;
-            }
+            return filterSample(JSON.parse(saved));
           }
         }
+      } else {
+        const guestSaved = localStorage.getItem('nutrink_patients_guest');
+        if (guestSaved) {
+          return filterSample(JSON.parse(guestSaved));
+        }
       }
-      return INITIAL_PATIENTS;
+      return [];
     } catch {
-      return INITIAL_PATIENTS;
+      return [];
     }
   });
 
@@ -276,15 +282,17 @@ export function App() {
     trackPageView(`NutrinK - ${path}`, path);
   }, [location.pathname]);
 
-  // Sync state changes with email-scoped localStorage
+  // Sync state changes with email-scoped (or guest) localStorage
   useEffect(() => {
     const email = userAccount?.email?.trim().toLowerCase();
-    if (email) {
-      try {
+    try {
+      if (email) {
         localStorage.setItem(`nutrink_patients_${email}`, JSON.stringify(patients));
-      } catch (e) {
-        console.error('Error saving patients:', e);
+      } else {
+        localStorage.setItem('nutrink_patients_guest', JSON.stringify(patients));
       }
+    } catch (e) {
+      console.error('Error saving patients:', e);
     }
   }, [patients, userAccount?.email]);
 
@@ -417,7 +425,15 @@ export function App() {
     if (cleanEmail) {
       try {
         const savedPatients = localStorage.getItem(`nutrink_patients_${cleanEmail}`);
-        setPatients(savedPatients ? JSON.parse(savedPatients) : []);
+        if (savedPatients) {
+          const parsedPats = JSON.parse(savedPatients);
+          const cleanPats = Array.isArray(parsedPats)
+            ? parsedPats.filter((p: any) => p && p.id && p.id !== 'pat-camila-rodrigues' && !p.tags?.includes('exemplo_degustacao'))
+            : [];
+          setPatients(cleanPats);
+        } else {
+          setPatients([]);
+        }
 
         const savedApts = localStorage.getItem(`nutrink_appointments_${cleanEmail}`);
         setAppointments(savedApts ? JSON.parse(savedApts) : []);
@@ -663,8 +679,11 @@ export function App() {
       try {
         const cloudPatients = await getPatients(email);
         if (!isSubscribed) return;
-        setPatients(cloudPatients && cloudPatients.length > 0 ? cloudPatients : INITIAL_PATIENTS);
-        try { localStorage.setItem(`nutrink_patients_${email}`, JSON.stringify(cloudPatients && cloudPatients.length > 0 ? cloudPatients : INITIAL_PATIENTS)); } catch {}
+        const cleanCloudPatients = (cloudPatients || []).filter(
+          (p: any) => p && p.id && p.id !== 'pat-camila-rodrigues' && !p.tags?.includes('exemplo_degustacao')
+        );
+        setPatients(cleanCloudPatients);
+        try { localStorage.setItem(`nutrink_patients_${email}`, JSON.stringify(cleanCloudPatients)); } catch {}
 
         const cloudApts = await getAppointments(email);
         if (!isSubscribed) return;
@@ -716,8 +735,11 @@ export function App() {
 
     const unsubPatients = subscribeToPatients((cloudPatients) => {
       if (isSubscribed) {
-        setPatients(cloudPatients || []);
-        try { localStorage.setItem(`nutrink_patients_${email}`, JSON.stringify(cloudPatients || [])); } catch {}
+        const cleanCloudPatients = (cloudPatients || []).filter(
+          (p: any) => p && p.id && p.id !== 'pat-camila-rodrigues' && !p.tags?.includes('exemplo_degustacao')
+        );
+        setPatients(cleanCloudPatients);
+        try { localStorage.setItem(`nutrink_patients_${email}`, JSON.stringify(cleanCloudPatients)); } catch {}
       }
     }, email);
 
